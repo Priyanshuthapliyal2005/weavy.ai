@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  clerkId       String    @unique 
+  image         String?
+
+  workflows     Workflow[]
+  sessions      Session[]
+  credentials   Credential[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Workflow {
+  id            String    @id @default(cuid())
+  name          String
+  description   String?
+  userId        String
+  
+  nodes         Json     
+  edges         Json     
+  
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runs          WorkflowRun[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([userId])
+}
+
+model WorkflowRun {
+  id              String    @id @default(cuid())
+  workflowId      String
+  status          String    
+
+  executionLogs   Json[]    
+  nodeExecutions  NodeExecution[]
+  
+  startedAt       DateTime  @default(now())
+  completedAt     DateTime?
+  duration        Int?      
+
+  workflow        Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  
+  @@index([workflowId])
+  @@index([status])
+  @@index([startedAt])
+}
+
+model NodeExecution {
+  id              String    @id @default(cuid())
+  runId           String
+  nodeId          String
+
+  status          String   
+  input           Json?
+  output          Json?
+  error           String?
+  duration        Int?     
+
+  run             WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  
+  createdAt       DateTime  @default(now())
+  @@index([runId])
+  @@index([nodeId])
+}
+
+model Session {
+  id              String    @id @default(cuid())
+  sessionToken    String    @unique
+  userId          String
+  expires         DateTime
+  
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+}
+
+model Credential {
+  id              String    @id @default(cuid())
+  name            String
+  userId          String
+  provider        String   
+  
+  credentials     Json     
+  
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([userId])
+  @@unique([userId, provider])
+}
