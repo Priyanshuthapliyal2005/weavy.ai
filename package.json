@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "seed": "tsx prisma/seed.ts"
+    "start": "next start"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.36.7",
@@ -46,8 +45,5 @@
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
-  },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
   }
 }
