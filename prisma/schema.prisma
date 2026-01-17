@@ -28,6 +28,7 @@ model Workflow {
   name          String
   description   String?
   userId        String
+  version       String    @default("1.0.0")
   
   nodes         Json     
   edges         Json     
