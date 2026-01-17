@@ -1,6 +1,8 @@
 import type { WorkflowNode, WorkflowEdge } from '@/store/workflow-store';
 import type { CustomNode } from '@/types/workflow';
 import { Edge } from '@xyflow/react';
+import { tasks } from '@trigger.dev/sdk/v3';
+import type { runLLMTask, cropImageTask, extractFrameTask } from '@/trigger';
 
 export interface ExecutionResult {
   nodeId: string;
@@ -127,26 +129,65 @@ export async function executeNode(
       case 'video':
         return { output: node.data.videoUrl };
         
-      case 'llm':
-        // TODO: Call Trigger.dev task for LLM execution
-        return { 
-          output: 'LLM execution placeholder - integrate Trigger.dev',
-          error: undefined 
-        };
+      case 'llm': {
+        // Trigger LLM task
+        const handle = await tasks.trigger<typeof runLLMTask>('run-llm', {
+          model: node.data.model || 'gemini-2.5-flash',
+          systemPrompt: inputs.system_prompt,
+          userMessage: inputs.user_message || inputs.prompt,
+          images: Array.isArray(inputs.images) 
+            ? inputs.images 
+            : inputs.image_1 
+              ? [inputs.image_1, inputs.image_2, inputs.image_3].filter(Boolean)
+              : [],
+        });
         
-      case 'crop':
-        // TODO: Call Trigger.dev task for image cropping
-        return { 
-          output: 'Crop execution placeholder - integrate Trigger.dev',
-          error: undefined 
-        };
+        // Wait for completion
+        const result = await handle.poll({ pollIntervalMs: 1000 });
         
-      case 'extract':
-        // TODO: Call Trigger.dev task for frame extraction
-        return { 
-          output: 'Extract frame placeholder - integrate Trigger.dev',
-          error: undefined 
-        };
+        if (result.ok) {
+          return { output: result.output.output };
+        } else {
+          return { output: null, error: 'LLM task failed' };
+        }
+      }
+        
+      case 'crop': {
+        // Trigger crop image task
+        const handle = await tasks.trigger<typeof cropImageTask>('crop-image', {
+          imageUrl: inputs.image_url,
+          xPercent: inputs.x_percent ? parseFloat(inputs.x_percent) : 0,
+          yPercent: inputs.y_percent ? parseFloat(inputs.y_percent) : 0,
+          widthPercent: inputs.width_percent ? parseFloat(inputs.width_percent) : 100,
+          heightPercent: inputs.height_percent ? parseFloat(inputs.height_percent) : 100,
+        });
+        
+        // Wait for completion
+        const result = await handle.poll({ pollIntervalMs: 1000 });
+        
+        if (result.ok) {
+          return { output: result.output.output };
+        } else {
+          return { output: null, error: 'Crop task failed' };
+        }
+      }
+        
+      case 'extract': {
+        // Trigger extract frame task
+        const handle = await tasks.trigger<typeof extractFrameTask>('extract-frame', {
+          videoUrl: inputs.video_url,
+          timestamp: inputs.timestamp || 0,
+        });
+        
+        // Wait for completion
+        const result = await handle.poll({ pollIntervalMs: 1000 });
+        
+        if (result.ok) {
+          return { output: result.output.output };
+        } else {
+          return { output: null, error: 'Frame extraction failed' };
+        }
+      }
         
       default:
         return { output: null, error: 'Unknown node type' };
