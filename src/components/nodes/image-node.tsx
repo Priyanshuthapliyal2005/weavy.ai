@@ -3,8 +3,9 @@
 import type React from 'react';
 import { memo, useCallback, useRef, useState } from 'react';
 import { type Node, type NodeProps } from '@xyflow/react';
-import { Upload, Download, Grid, Square } from 'lucide-react';
+import { Upload, Download, Grid, Square, Loader2 } from 'lucide-react';
 import { useWorkflowStore } from '@/store/workflow-store';
+import toast from 'react-hot-toast';
 import { BaseNode } from './base-node';
 import { HANDLE_COLORS } from '@/constants/colors';
 import { HANDLE_IDS } from '@/constants/node-ids';
@@ -32,6 +33,7 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<ImageNode>) {
   const { updateNodeData } = useWorkflowStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fileLink, setFileLink] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
   const viewMode = data?.viewMode || 'single';
   const images =
     data?.images ||
@@ -43,22 +45,45 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<ImageNode>) {
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) {
+        setIsUploading(true);
+        const toastId = toast.loading('Uploading image...');
+        
         try {
-          const dataUrl = await readFileAsDataURL(file);
+          // Upload to Transloadit
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('type', 'image');
+          
+          const response = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData,
+          });
+          
+          if (!response.ok) {
+            throw new Error('Upload failed');
+          }
+          
+          const { url } = await response.json();
+          
           const newImage = {
             id: Date.now().toString(),
-            url: dataUrl,
-            file: file,
+            url: url,
+            file: null, // Clear file after upload
           };
           const updatedImages = [...images, newImage];
           updateNodeData(id, {
             images: updatedImages,
             imageUrl: updatedImages[0]?.url || null,
-            imageFile: updatedImages[0]?.file || null,
+            imageFile: null,
             viewMode: viewMode,
           });
+          
+          toast.success('Image uploaded!', { id: toastId });
         } catch (error) {
-          console.error('Failed to read file:', error);
+          console.error('Failed to upload file:', error);
+          toast.error('Upload failed', { id: toastId });
+        } finally {
+          setIsUploading(false);
         }
       }
     },
@@ -280,8 +305,8 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<ImageNode>) {
           <div
             onDrop={handleDrop}
             onDragOver={handleDragOver}
-            onClick={() => fileInputRef.current?.click()}
-            className='w-full bg-[#353539] rounded-lg border border-panel-border flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-white/20 transition-colors relative overflow-hidden'
+            onClick={() => !isUploading && fileInputRef.current?.click()}
+            className='w-full bg-[#353539] rounded-lg border border-panel-border flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-white/20 transition-colors relative overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed'
             style={{
               minHeight: `${IMAGE_DISPLAY_MIN_HEIGHT}px`,
               backgroundImage: `
@@ -300,11 +325,17 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<ImageNode>) {
               `,
               backgroundSize: '20px 20px',
               backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
+              opacity: isUploading ? 0.5 : 1,
+              pointerEvents: isUploading ? 'none' : 'auto',
             }}
           >
-            <Upload className='w-6 h-6 text-white' />
+            {isUploading ? (
+              <Loader2 className='w-6 h-6 text-white animate-spin' />
+            ) : (
+              <Upload className='w-6 h-6 text-white' />
+            )}
             <span className='text-sm text-white/70'>
-              Drag & drop or click to upload
+              {isUploading ? 'Uploading...' : 'Drag & drop or click to upload'}
             </span>
           </div>
         )}
