@@ -12,6 +12,8 @@ import {
   FolderOpen,
   Trash2,
   Loader2,
+  Play,
+  PlayCircle,
 } from 'lucide-react';
 import { useWorkflowStore } from '@/store/workflow-store';
 import { useReactFlow, useStore, type ReactFlowState } from '@xyflow/react';
@@ -44,6 +46,8 @@ export function Toolbar() {
     workflowId,
     clearWorkflowId,
     clearWorkflow,
+    isExecuting,
+    executeWorkflow,
   } = useWorkflowStore();
   const { zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
   const zoom = useStore(zoomSelector);
@@ -308,6 +312,49 @@ export function Toolbar() {
     }
   };
 
+  const handleRunWorkflow = async () => {
+    if (!isSignedIn) {
+      toast.error('Please sign in to run workflows');
+      return;
+    }
+
+    if (nodes.length === 0) {
+      toast.error('No nodes to execute');
+      return;
+    }
+
+    try {
+      toast.loading('Executing workflow...', { id: 'workflow-execution' });
+      await executeWorkflow();
+      toast.success('Workflow executed successfully', { id: 'workflow-execution' });
+    } catch (error) {
+      console.error('Workflow execution error:', error);
+      toast.error('Workflow execution failed', { id: 'workflow-execution' });
+    }
+  };
+
+  const handleRunSelectedNodes = async () => {
+    if (!isSignedIn) {
+      toast.error('Please sign in to run workflows');
+      return;
+    }
+
+    const selectedNodes = nodes.filter(node => node.selected);
+    if (selectedNodes.length === 0) {
+      toast.error('No nodes selected');
+      return;
+    }
+
+    try {
+      toast.loading(`Executing ${selectedNodes.length} node(s)...`, { id: 'workflow-execution' });
+      await executeWorkflow(selectedNodes.map(n => n.id));
+      toast.success('Selected nodes executed successfully', { id: 'workflow-execution' });
+    } catch (error) {
+      console.error('Workflow execution error:', error);
+      toast.error('Execution failed', { id: 'workflow-execution' });
+    }
+  };
+
   return (
     <div className='flex items-center gap-0.5 rounded-md border border-panel-border bg-panel-bg p-1 shadow-lg ring-1 ring-inset ring-white/5'>
       <Tooltip text='Select mode' position='top'>
@@ -355,6 +402,32 @@ export function Toolbar() {
           className='rounded-sm p-1.5 text-panel-text transition-colors cursor-pointer enabled:hover:bg-panel-hover disabled:text-panel-text-muted'
         >
           <Redo2 className='h-5 w-5' strokeWidth={1.5} />
+        </button>
+      </Tooltip>
+
+      <div className='mx-1 h-5 w-px bg-panel-text-muted/30' />
+
+      <Tooltip text='Run entire workflow' position='top'>
+        <button
+          onClick={handleRunWorkflow}
+          disabled={!isSignedIn || isExecuting || nodes.length === 0}
+          className='rounded-sm p-1.5 text-panel-text transition-colors cursor-pointer enabled:hover:bg-panel-hover disabled:text-panel-text-muted'
+        >
+          {isExecuting ? (
+            <Loader2 className='h-5 w-5 animate-spin' strokeWidth={1.5} />
+          ) : (
+            <Play className='h-5 w-5' strokeWidth={1.5} />
+          )}
+        </button>
+      </Tooltip>
+
+      <Tooltip text='Run selected nodes only' position='top'>
+        <button
+          onClick={handleRunSelectedNodes}
+          disabled={!isSignedIn || isExecuting || nodes.filter(n => n.selected).length === 0}
+          className='rounded-sm p-1.5 text-panel-text transition-colors cursor-pointer enabled:hover:bg-panel-hover disabled:text-panel-text-muted'
+        >
+          <PlayCircle className='h-5 w-5' strokeWidth={1.5} />
         </button>
       </Tooltip>
 

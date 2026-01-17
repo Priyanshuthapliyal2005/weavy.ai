@@ -3,6 +3,7 @@
 import { ReactFlowProvider } from "@xyflow/react"
 import { WorkflowCanvas } from "./canvas"
 import { Sidebar } from "./sidebar"
+import { WorkflowHistorySidebar } from "./workflow-history-sidebar"
 
 export default function WorkflowBuilder() {
   return (
@@ -13,6 +14,7 @@ export default function WorkflowBuilder() {
           <div className="flex-1 overflow-hidden">
             <WorkflowCanvas />
           </div>
+          <WorkflowHistorySidebar />
         </div>
       </div>
     </ReactFlowProvider>

@@ -42,6 +42,8 @@ interface WorkflowStore {
   historyIndex: number
   selectedFromTags: string[]
   selectedToTags: string[]
+  isExecuting: boolean
+  executionResults: Map<string, any>
 
   // Actions
   setNodes: (nodes: WorkflowNode[]) => void
@@ -73,6 +75,8 @@ interface WorkflowStore {
   saveWorkflowToDB: (name: string, workflow: WorkflowJSON) => Promise<string | null>
   loadWorkflowFromDB: (id: string) => Promise<void>
   clearWorkflowId: () => void
+  executeWorkflow: (selectedNodeIds?: string[]) => Promise<void>
+  setIsExecuting: (isExecuting: boolean) => void
 }
 
 export const useWorkflowStore = create<WorkflowStore>()(
@@ -89,6 +93,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
       historyIndex: -1,
       selectedFromTags: [],
       selectedToTags: [],
+      isExecuting: false,
+      executionResults: new Map(),
 
       setNodes: (nodes) => set({ nodes }),
       setEdges: (edges) => set({ edges }),
@@ -96,6 +102,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
       setInteractionMode: (mode) => set({ interactionMode: mode }),
       
       setActiveTab: (tab) => set({ activeTab: tab }),
+      
+      setIsExecuting: (isExecuting) => set({ isExecuting }),
       
       setSelectedFromTags: (tags) => set({ selectedFromTags: tags }),
       
@@ -527,6 +535,48 @@ export const useWorkflowStore = create<WorkflowStore>()(
           edges: workflowEdges,
         })
         get().saveToHistory()
+      },
+
+      executeWorkflow: async (selectedNodeIds?: string[]) => {
+        const { nodes, edges, workflowId } = get();
+        set({ isExecuting: true });
+
+        try {
+          const response = await fetch('/api/workflows/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              workflowId: workflowId || 'temp',
+              nodes,
+              edges,
+              selectedNodeIds,
+              scope: selectedNodeIds ? (selectedNodeIds.length === 1 ? 'single' : 'partial') : 'full',
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error('Workflow execution failed');
+          }
+
+          const result = await response.json();
+          
+          // Update execution results
+          const resultsMap = new Map();
+          result.nodeResults?.forEach((nr: any) => {
+            resultsMap.set(nr.nodeId, nr.output);
+          });
+          set({ executionResults: resultsMap });
+
+          // Trigger history refresh
+          window.dispatchEvent(new CustomEvent('workflow-executed'));
+          
+          return result;
+        } catch (error) {
+          console.error('Execution error:', error);
+          throw error;
+        } finally {
+          set({ isExecuting: false });
+        }
       },
     }),
     {
