@@ -19,6 +19,9 @@ import { cn } from "@/lib/utils"
 import { TextNode } from "./nodes/text-node"
 import { ImageNode } from "./nodes/image-node"
 import { LLMNode } from "./nodes/llm-node"
+import { VideoNode } from "./nodes/video-node"
+import { CropImageNode } from "./nodes/crop-image-node"
+import { ExtractFrameNode } from "./nodes/extract-frame-node"
 import { Toolbar } from "./toolbar"
 import { NodeActionsSidebar } from "./node-actions-sidebar"
 import { CustomConnectionLine } from "./custom-connection-line"
@@ -32,6 +35,9 @@ const nodeTypes: NodeTypes = {
   text: TextNode,
   image: ImageNode,
   llm: LLMNode,
+  video: VideoNode,
+  crop: CropImageNode,
+  extract: ExtractFrameNode,
 }
 
 const edgeTypes: EdgeTypes = {

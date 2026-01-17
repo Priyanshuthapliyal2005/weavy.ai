@@ -33,12 +33,50 @@ export interface LLMNodeData {
   [key: string]: unknown
 }
 
-export type CustomNodeData = TextNodeData | ImageNodeData | LLMNodeData
+export interface VideoNodeData {
+  label: string
+  videoUrl: string | null
+  videoFile: File | null
+  type: "video"
+  locked?: boolean
+  viewMode?: 'single' | 'all'
+  [key: string]: unknown
+}
+
+export interface CropImageNodeData {
+  label: string
+  xPercent: number
+  yPercent: number
+  widthPercent: number
+  heightPercent: number
+  isProcessing: boolean
+  outputUrl: string | null
+  error: string | null
+  type: "crop"
+  locked?: boolean
+  [key: string]: unknown
+}
+
+export interface ExtractFrameNodeData {
+  label: string
+  timestamp: string
+  isProcessing: boolean
+  outputUrl: string | null
+  error: string | null
+  type: "extract"
+  locked?: boolean
+  [key: string]: unknown
+}
+
+export type CustomNodeData = TextNodeData | ImageNodeData | LLMNodeData | VideoNodeData | CropImageNodeData | ExtractFrameNodeData
 export type TextNode = Node<TextNodeData, "text">
 export type ImageNode = Node<ImageNodeData, "image">
 export type LLMNode = Node<LLMNodeData, "llm">
+export type VideoNode = Node<VideoNodeData, "video">
+export type CropImageNode = Node<CropImageNodeData, "crop">
+export type ExtractFrameNode = Node<ExtractFrameNodeData, "extract">
 
-export type CustomNode = TextNode | ImageNode | LLMNode
+export type CustomNode = TextNode | ImageNode | LLMNode | VideoNode | CropImageNode | ExtractFrameNode
 export interface WorkflowState {
   nodes: CustomNode[]
   edges: Edge[]

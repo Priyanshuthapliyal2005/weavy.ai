@@ -120,11 +120,19 @@ export function Sidebar() {
     },
     {
       icon: ImageIcon,
-      label: 'Image',
+      label: 'Upload Image',
       type: 'image' as const,
       category: 'tools' as const,
       fromTags: [] as string[],
       toTags: ['image'] as string[],
+    },
+    {
+      icon: Video,
+      label: 'Upload Video',
+      type: 'video' as const,
+      category: 'tools' as const,
+      fromTags: [] as string[],
+      toTags: ['video'] as string[],
     },
     {
       icon: Sparkles,
@@ -133,6 +141,22 @@ export function Sidebar() {
       category: 'models' as const,
       fromTags: ['text', 'image'] as string[],
       toTags: ['text'] as string[],
+    },
+    {
+      icon: Box,
+      label: 'Crop Image',
+      type: 'crop' as const,
+      category: 'tools' as const,
+      fromTags: ['image'] as string[],
+      toTags: ['image'] as string[],
+    },
+    {
+      icon: HelpCircle,
+      label: 'Extract Frame',
+      type: 'extract' as const,
+      category: 'tools' as const,
+      fromTags: ['video'] as string[],
+      toTags: ['image'] as string[],
     },
   ];
 

@@ -49,7 +49,7 @@ interface WorkflowStore {
   onNodesChange: (changes: NodeChange[]) => void
   onEdgesChange: (changes: EdgeChange[]) => void
   onConnect: (params: Connection) => void
-  addNode: (type: 'text' | 'image' | 'llm', position: { x: number; y: number }) => string
+  addNode: (type: 'text' | 'image' | 'llm' | 'video' | 'crop' | 'extract', position: { x: number; y: number }) => string
   setActiveTab: (tab: string | null) => void
   setSelectedFromTags: (tags: string[]) => void
   setSelectedToTags: (tags: string[]) => void
@@ -219,10 +219,23 @@ export const useWorkflowStore = create<WorkflowStore>()(
               type: 'image',
               position,
               data: {
-                label: 'Image',
+                label: 'Upload Image',
                 imageUrl: null,
                 imageFile: null,
                 type: 'image',
+              },
+            }
+            break
+          case 'video':
+            newNode = {
+              id,
+              type: 'video',
+              position,
+              data: {
+                label: 'Upload Video',
+                videoUrl: null,
+                videoFile: null,
+                type: 'video',
               },
             }
             break
@@ -238,6 +251,39 @@ export const useWorkflowStore = create<WorkflowStore>()(
                 output: '',
                 error: null,
                 type: 'llm',
+              },
+            }
+            break
+          case 'crop':
+            newNode = {
+              id,
+              type: 'crop',
+              position,
+              data: {
+                label: 'Crop Image',
+                xPercent: 0,
+                yPercent: 0,
+                widthPercent: 100,
+                heightPercent: 100,
+                isProcessing: false,
+                outputUrl: null,
+                error: null,
+                type: 'crop',
+              },
+            }
+            break
+          case 'extract':
+            newNode = {
+              id,
+              type: 'extract',
+              position,
+              data: {
+                label: 'Extract Frame',
+                timestamp: '0',
+                isProcessing: false,
+                outputUrl: null,
+                error: null,
+                type: 'extract',
               },
             }
             break
