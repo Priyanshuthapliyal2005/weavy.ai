@@ -17,6 +17,7 @@ export function CustomEdge(props: EdgeProps) {
     source,
     target,
     data,
+    selected,
   } = props
   const sourceHandle = (props as any).sourceHandle
   const targetHandle = (props as any).targetHandle
@@ -74,16 +75,39 @@ export function CustomEdge(props: EdgeProps) {
           </linearGradient>
         </defs>
       )}
+      {/* Invisible wider path for easier selection */}
+      <path
+        style={{
+          stroke: 'transparent',
+          strokeWidth: 20,
+          fill: 'none',
+          cursor: 'pointer',
+        }}
+        d={edgePath}
+        className="react-flow__edge-interaction"
+      />
+      {/* Selection highlight */}
+      {selected && (
+        <path
+          style={{
+            stroke: '#a855f7',
+            strokeWidth: 6,
+            fill: 'none',
+            opacity: 0.5,
+          }}
+          d={edgePath}
+        />
+      )}
       <path
         id={id}
         style={{
           ...style,
           stroke: useGradient ? `url(#${gradientId})` : sourceColor,
-          strokeWidth: style.strokeWidth || 2,
+          strokeWidth: selected ? 3 : (style.strokeWidth || 2),
           fill: 'none',
           opacity: 1,
           visibility: 'visible',
-          
+          cursor: 'pointer',
         }}
         className="react-flow__edge-path"
         d={edgePath}

@@ -1,13 +1,13 @@
 'use client';
 
-import { useCallback, useState, useMemo, useEffect } from 'react';
+import { useCallback, useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Search } from 'lucide-react';
 import { getHandleColor } from '@/lib/handle-colors';
 import { HANDLE_COLORS } from '@/constants/colors';
 
 interface CompatibleNode {
-  type: 'text' | 'image' | 'llm';
+  type: 'text' | 'image' | 'llm' | 'video' | 'crop' | 'extract';
   label: string;
   handleId: string;
 }
@@ -18,10 +18,10 @@ interface CompatibleNodesMenuProps {
   sourceInfo: {
     nodeId: string;
     handleId: string;
-    nodeType?: 'text' | 'image' | 'llm';
+    nodeType?: 'text' | 'image' | 'llm' | 'video' | 'crop' | 'extract';
     isOutput: boolean;
   } | null;
-  onSelect: (nodeType: 'text' | 'image' | 'llm', handleId: string) => void;
+  onSelect: (nodeType: 'text' | 'image' | 'llm' | 'video' | 'crop' | 'extract', handleId: string) => void;
   onClose: () => void;
 }
 
@@ -33,6 +33,7 @@ export function CompatibleNodesMenu({
   onClose,
 }: CompatibleNodesMenuProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   
   useEffect(() => {
@@ -40,6 +41,14 @@ export function CompatibleNodesMenu({
       setSearchQuery('');
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !position) return;
+    if (!menuRef.current) return;
+
+    menuRef.current.style.left = `${position.x}px`;
+    menuRef.current.style.top = `${position.y}px`;
+  }, [isOpen, position]);
 
   
   const compatibleNodes = useMemo((): CompatibleNode[] => {
@@ -55,45 +64,44 @@ export function CompatibleNodesMenu({
 
     
     if (sourceInfo.isOutput) {
-      
-      if (sourceColor === HANDLE_COLORS.image) {
-        nodes.push({
-          type: 'llm',
-          label: 'Run Any LLM',
-          handleId: 'image_1', 
-        });
+      // Dragging from an output: suggest nodes that can accept this output.
+      if (sourceColor === HANDLE_COLORS.IMAGE || sourceColor === HANDLE_COLORS.image) {
+        nodes.push(
+          { type: 'llm', label: 'Run Any LLM', handleId: 'image_1' },
+          { type: 'crop', label: 'Crop Image', handleId: 'image_url' }
+        );
       }
-      
-      if (sourceColor === HANDLE_COLORS.text) {
-        nodes.push({
-          type: 'llm',
-          label: 'Run Any LLM',
-          handleId: 'prompt', 
-        });
+
+      if (sourceColor === HANDLE_COLORS.VIDEO) {
+        nodes.push({ type: 'extract', label: 'Extract Frame', handleId: 'video_url' });
+      }
+
+      if (sourceColor === HANDLE_COLORS.TEXT || sourceColor === HANDLE_COLORS.text) {
+        nodes.push({ type: 'llm', label: 'Run Any LLM', handleId: 'prompt' });
       }
     } else {
-      
-      
-      if (sourceColor === HANDLE_COLORS.image) {
-        nodes.push({
-          type: 'image',
-          label: 'Image',
-          handleId: 'output', 
-        });
-      }
-      
-      if (sourceColor === HANDLE_COLORS.prompt) {
+      // Dragging from an input: suggest source nodes that can provide the right output.
+      if (sourceColor === HANDLE_COLORS.IMAGE || sourceColor === HANDLE_COLORS.image) {
         nodes.push(
-          {
-            type: 'text',
-            label: 'Text',
-            handleId: 'output', 
-          },
-          {
-            type: 'llm',
-            label: 'Run Any LLM',
-            handleId: 'output', 
-          }
+          { type: 'image', label: 'Upload Image', handleId: 'output' },
+          { type: 'crop', label: 'Crop Image', handleId: 'output' },
+          { type: 'extract', label: 'Extract Frame', handleId: 'output' }
+        );
+      }
+
+      if (sourceColor === HANDLE_COLORS.VIDEO) {
+        nodes.push({ type: 'video', label: 'Upload Video', handleId: 'output' });
+      }
+
+      if (
+        sourceColor === HANDLE_COLORS.prompt ||
+        sourceColor === HANDLE_COLORS.TEXT ||
+        sourceColor === HANDLE_COLORS.text ||
+        sourceColor === HANDLE_COLORS.NUMBER
+      ) {
+        nodes.push(
+          { type: 'text', label: 'Text', handleId: 'output' },
+          { type: 'llm', label: 'Run Any LLM', handleId: 'output' }
         );
       }
     }
@@ -111,7 +119,7 @@ export function CompatibleNodesMenu({
   }, [compatibleNodes, searchQuery]);
 
   const handleNodeClick = useCallback(
-    (nodeType: 'text' | 'image' | 'llm', handleId: string) => {
+    (nodeType: 'text' | 'image' | 'llm' | 'video' | 'crop' | 'extract', handleId: string) => {
       onSelect(nodeType, handleId);
       onClose();
       setSearchQuery('');
@@ -133,16 +141,12 @@ export function CompatibleNodesMenu({
     ? createPortal(
         <>
           <div
-            className="fixed inset-0 z-[90]"
+            className="fixed inset-0 z-90 cursor-default"
             onClick={handleClose}
-            style={{ cursor: 'default' }}
           />
           <div
-            className="fixed z-[100] bg-panel-bg border border-panel-border rounded-lg shadow-2xl w-[180px] max-h-[300px] flex flex-col"
-            style={{
-              left: `${position.x}px`,
-              top: `${position.y}px`,
-            }}
+            ref={menuRef}
+            className="fixed z-100 bg-panel-bg border border-panel-border rounded-lg shadow-2xl w-45 max-h-75 flex flex-col"
           >
             <div className="p-1 border-b border-panel-border">
               <div className="relative">

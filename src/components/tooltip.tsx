@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 
 const TOOLTIP_OFFSET_PX = 8;
+const TOOLTIP_DELAY_MS = 150;
 
 interface TooltipProps {
   text: string;
@@ -17,7 +18,7 @@ export function Tooltip({ text, children, position = 'top' }: TooltipProps) {
   const handleMouseEnter = () => {
     timeoutRef.current = setTimeout(() => {
       setIsVisible(true);
-    }, 500);
+    }, TOOLTIP_DELAY_MS);
   };
 
   const handleMouseLeave = () => {

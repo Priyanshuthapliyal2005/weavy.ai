@@ -6,10 +6,10 @@ import { useCallback, useRef, useEffect, useState } from "react"
 import {
   ReactFlow,
   Background,
-  MiniMap,
   BackgroundVariant,
   type OnConnect,
   type NodeTypes,
+  MiniMap,
   useReactFlow,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
@@ -22,7 +22,7 @@ import { LLMNode } from "./nodes/llm-node"
 import { VideoNode } from "./nodes/video-node"
 import { CropImageNode } from "./nodes/crop-image-node"
 import { ExtractFrameNode } from "./nodes/extract-frame-node"
-import { Toolbar } from "./toolbar"
+// import { Toolbar } from "./toolbar" // Removed legacy toolbar
 import { NodeActionsSidebar } from "./node-actions-sidebar"
 import { CustomConnectionLine } from "./custom-connection-line"
 import { CustomEdge } from "./custom-edge"
@@ -30,6 +30,9 @@ import { CompatibleNodesMenu } from "./compatible-nodes-menu"
 import type { EdgeTypes } from "@xyflow/react"
 import { NODE_COLORS, HANDLE_COLORS } from "@/constants/colors"
 import { getHandleColor } from "@/lib/handle-colors"
+import { validateConnection } from "@/lib/connection-validation"
+import { HANDLE_IDS } from "@/constants/node-ids"
+import toast from "react-hot-toast"
 
 const nodeTypes: NodeTypes = {
   text: TextNode,
@@ -44,7 +47,11 @@ const edgeTypes: EdgeTypes = {
   default: CustomEdge,
 }
 
-export function WorkflowCanvas() {
+interface WorkflowCanvasProps {
+  showGrid: boolean;
+}
+
+export function WorkflowCanvas({ showGrid }: WorkflowCanvasProps) {
   const {
     nodes,
     edges,
@@ -61,6 +68,9 @@ export function WorkflowCanvas() {
     updateNodeData,
     deleteNode,
     loadProductAnalysisWorkflow,
+    openRightSidebar,
+    closeRightSidebar,
+    rightSidebarTab,
   } = useWorkflowStore()
 
   const [isEditingTitle, setIsEditingTitle] = useState(false)
@@ -74,13 +84,14 @@ export function WorkflowCanvas() {
   const [connectionSourceInfo, setConnectionSourceInfo] = useState<{
     nodeId: string
     handleId: string
-    nodeType?: 'text' | 'image' | 'llm'
+    nodeType?: 'text' | 'image' | 'llm' | 'video' | 'crop' | 'extract'
     isOutput: boolean
   } | null>(null)
   const [wasConnectionSuccessful, setWasConnectionSuccessful] = useState(false)
   const [lastMousePosition, setLastMousePosition] = useState<{ x: number; y: number } | null>(null)
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const { screenToFlowPosition, flowToScreenPosition, getNode } = useReactFlow()
+  const lastInvalidConnectReasonRef = useRef<string | null>(null)
 
   
   useEffect(() => {
@@ -154,6 +165,15 @@ export function WorkflowCanvas() {
     [onConnect],
   )
 
+  const isValidConnection = useCallback(
+    (connection: any) => {
+      const result = validateConnection(connection, nodes as any, edges as any)
+      lastInvalidConnectReasonRef.current = result.ok ? null : result.reason
+      return result.ok
+    },
+    [nodes, edges]
+  )
+
   const handleConnectStart = useCallback(
     (event: any, params: { nodeId: string | null; handleId: string | null }) => {
       const { nodeId, handleId } = params
@@ -170,9 +190,8 @@ export function WorkflowCanvas() {
         
         const sourceNode = nodes.find((n) => n.id === nodeId)
         if (sourceNode && sourceNode.type) {
-          const inputHandleIds = ['prompt', 'system_prompt', 'image_1', 'images', 'input']
-          const isOutput = !inputHandleIds.includes(handleId)
-          const nodeType = sourceNode.type as 'text' | 'image' | 'llm'
+          const isOutput = handleId === HANDLE_IDS.OUTPUT
+          const nodeType = sourceNode.type as any
           
           const handleColor = getHandleColor(handleId, nodeType, isOutput)
           setConnectionLineColor(handleColor)
@@ -242,6 +261,16 @@ export function WorkflowCanvas() {
           }
         }
         
+        const invalidReason = lastInvalidConnectReasonRef.current
+        if (!wasSuccessful && invalidReason) {
+          toast.error(invalidReason)
+          lastInvalidConnectReasonRef.current = null
+          // Don't open the compatible-nodes menu when the user tried an invalid connection.
+          setIsCompatibleMenuOpen(false)
+          setCompatibleMenuPosition(null)
+          return
+        }
+
         if (!wasSuccessful && sourceInfo) {
           const finalPos = mousePos || lastMousePosition || { 
             x: window.innerWidth / 2, 
@@ -309,21 +338,20 @@ export function WorkflowCanvas() {
         selectNode(node.id)
         
         const clickedNode = nodes.find((n) => n.id === node.id)
-        if (clickedNode?.type === 'llm') {
-          setSelectedNodeForActions(node.id)
-          setIsActionsMenuOpen(true)
-        } else {
-          
-          setSelectedNodeForActions(null)
-          setIsActionsMenuOpen(false)
+        // Open task panel for runnable nodes (llm, crop, extract)
+        if (clickedNode?.type === 'llm' || clickedNode?.type === 'crop' || clickedNode?.type === 'extract') {
+          openRightSidebar('tasks')
         }
       }
     },
-    [selectNode, interactionMode, nodes],
+    [selectNode, interactionMode, nodes, openRightSidebar],
   )
 
   const handlePaneClick = useCallback(() => {
     selectNode(null)
+    if (rightSidebarTab === 'tasks') {
+      closeRightSidebar()
+    }
     
     setSelectedNodeForActions(null)
     setIsActionsMenuOpen(false)
@@ -331,7 +359,7 @@ export function WorkflowCanvas() {
     setIsCompatibleMenuOpen(false)
     setCompatibleMenuPosition(null)
     setConnectionSourceInfo(null)
-  }, [selectNode])
+  }, [selectNode, rightSidebarTab, closeRightSidebar])
 
   const handleNodesChangeWithHistory = useCallback(
     (changes: Parameters<typeof onNodesChange>[0]) => {
@@ -407,51 +435,6 @@ export function WorkflowCanvas() {
   return (
     <div className="flex-1 flex flex-col h-full relative">
       <div ref={reactFlowWrapper} className="flex-1 bg-[#0e0e12] relative">
-        <div className={cn(
-          "absolute top-[20px] left-4 z-10 transition-all duration-200",
-          activeTab ? "opacity-0 pointer-events-none" : "opacity-100"
-        )}>
-          <div className={cn(
-            "bg-panel-bg/95 backdrop-blur-md border rounded-md p-1.5 shadow-[0_20px_50px_rgba(0,0,0,0.5)] w-[210px] transition-all duration-200",
-            isEditingTitle ? "border-panel-text-muted/30" : "border-panel-border/30"
-          )}>
-            {isEditingTitle ? (
-              <input
-                autoFocus
-                type="text"
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                onBlur={() => setIsEditingTitle(false)}
-                onKeyDown={(e) => e.key === "Enter" && setIsEditingTitle(false)}
-                className="bg-transparent border border-transparent rounded-sm px-3 py-1 text-sm font-light text-white focus:outline-none w-full transition-colors truncate"
-                placeholder="Project Name"
-              />
-            ) : (
-              <div 
-                onClick={() => setIsEditingTitle(true)}
-                className="relative group/input cursor-text px-3 py-1 hover:bg-white/5 rounded-sm transition-colors border border-transparent w-full"
-              >
-                <span className="text-sm font-light text-white block tracking-tight truncate">
-                  {projectName || "untitled"}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-        
-        <div className={cn(
-          "absolute top-[20px] right-4 z-10 transition-all duration-200",
-          activeTab ? "opacity-0 pointer-events-none" : "opacity-100"
-        )}>
-          <div className="bg-panel-bg/95 backdrop-blur-md border border-panel-border/30 rounded-md p-1.5 shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-200">
-            <button
-              onClick={() => loadProductAnalysisWorkflow()}
-              className="flex items-center gap-1.5 px-2 py-1 bg-white/10 border border-white/50 text-white/90 text-xs font-light rounded transition-colors hover:bg-white/15 cursor-pointer"
-            >
-              Load Example Workflow
-            </button>
-          </div>
-        </div>
         <ReactFlow
           nodes={nodes.map((node) => ({
             ...node,
@@ -461,6 +444,7 @@ export function WorkflowCanvas() {
           onNodesChange={handleNodesChangeWithHistory}
           onEdgesChange={onEdgesChange}
           onConnect={handleConnect}
+                    isValidConnection={isValidConnection}
           onConnectStart={handleConnectStart}
           onConnectEnd={handleConnectEnd}
           onDragOver={handleDragOver}
@@ -499,31 +483,32 @@ export function WorkflowCanvas() {
           zoomOnScroll={!isModalOpen}
           zoomOnDoubleClick={!isPanMode && !isModalOpen}
           zoomOnPinch={!isModalOpen}
-          elementsSelectable={!isPanMode} 
+          elementsSelectable={!isPanMode}
+          edgesReconnectable={true}
+          edgesFocusable={true}
+          deleteKeyCode={['Backspace', 'Delete']}
           proOptions={{ hideAttribution: true }}
           className="workflow-canvas"
         >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#65606b" />
+          {showGrid && (
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#65606b" />
+          )}
           <MiniMap
-            nodeColor={(node) => {
-              switch (node.type) {
-                case "text":
-                  return NODE_COLORS.text
-                case "image":
-                  return NODE_COLORS.image
-                case "llm":
-                  return NODE_COLORS.llm
-                default:
-                  return "#6b7280"
-              }
+            position="bottom-right"
+            pannable
+            zoomable
+            nodeColor={(n) => {
+              const type = (n as any)?.type as keyof typeof NODE_COLORS
+              return (NODE_COLORS as any)[type] ?? "#6b7280"
             }}
-            maskColor="rgba(0, 0, 0, 0.8)"
+            maskColor="rgba(14, 14, 18, 0.55)"
+            style={{
+              backgroundColor: "#1e1e22",
+              border: "1px solid #2a2a2e",
+              borderRadius: 8,
+            }}
           />
         </ReactFlow>
-      </div>
-      
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10">
-        <Toolbar />
       </div>
 
       <NodeActionsSidebar
@@ -587,9 +572,9 @@ export function WorkflowCanvas() {
             if (selectedNodeForActions) {
               updateNodeData(selectedNodeForActions, data)
             }
-          }}
+          }}  
         />
-      
+
       <CompatibleNodesMenu
         isOpen={isCompatibleMenuOpen}
         position={compatibleMenuPosition}
