@@ -10,13 +10,24 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const user = await prisma.user.findUnique({
+      where: { clerkId: userId },
+      select: { id: true },
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
     const workflowId = req.nextUrl.searchParams.get('workflowId');
     const limit = parseInt(req.nextUrl.searchParams.get('limit') || '20');
     
-    const where: any = {};
-    if (workflowId) {
-      where.workflowId = workflowId;
-    }
+    const where: any = {
+      workflow: {
+        userId: user.id,
+      },
+    };
+    if (workflowId) where.workflowId = workflowId;
 
     const runs = await prisma.workflowRun.findMany({
       where,
@@ -42,6 +53,7 @@ export async function GET(req: NextRequest) {
           id: ne.id,
           nodeId: ne.nodeId,
           status: ne.status,
+          input: ne.input,
           output: ne.output,
           error: ne.error,
           duration: ne.duration,

@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { prisma } from '@/lib/db/client';
+import { Prisma } from '@/generated/prisma';
 import { z } from 'zod';
 import { executeWorkflow } from '@/lib/workflow-execution';
 import type { CustomNode } from '@/types/workflow';
 import type { Edge } from '@xyflow/react';
 
 const executeSchema = z.object({
+  workflowId: z.string().min(1).optional(),
   nodes: z.array(z.any()),
   edges: z.array(z.any()),
   selectedNodeIds: z.array(z.string()).optional(),
@@ -21,6 +23,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const user = await prisma.user.findUnique({
+      where: { clerkId: userId },
+      select: { id: true },
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
     const body = await req.json();
     const validated = executeSchema.parse(body);
     
@@ -30,11 +41,34 @@ export async function POST(req: NextRequest) {
       validated.edges as Edge[],
       validated.selectedNodeIds
     );
-    
-    // Save execution to database
+
+    const workflowId = validated.workflowId;
+    const isPersistableWorkflowId = !!workflowId && workflowId !== 'temp';
+
+    if (!isPersistableWorkflowId) {
+      return NextResponse.json({
+        runId: null,
+        status: result.status,
+        duration: result.totalDuration,
+        nodeResults: result.nodeResults,
+      });
+    }
+
+    const workflow = await prisma.workflow.findFirst({
+      where: {
+        id: workflowId,
+        userId: user.id,
+      },
+      select: { id: true },
+    });
+
+    if (!workflow) {
+      return NextResponse.json({ error: 'Workflow not found' }, { status: 404 });
+    }
+
     const workflowRun = await prisma.workflowRun.create({
       data: {
-        workflowId: body.workflowId || 'temp',
+        workflowId: workflow.id,
         status: result.status,
         startedAt: result.startedAt,
         completedAt: result.completedAt,
@@ -47,11 +81,11 @@ export async function POST(req: NextRequest) {
           },
         ],
         nodeExecutions: {
-          create: result.nodeResults.map(nr => ({
+          create: result.nodeResults.map((nr) => ({
             nodeId: nr.nodeId,
             status: nr.status,
-            input: {},
-            output: nr.output ? { data: nr.output } : null,
+            input: nr.input == null ? Prisma.JsonNull : { data: nr.input },
+            output: nr.output == null ? Prisma.JsonNull : { data: nr.output },
             error: nr.error,
             duration: nr.duration,
             createdAt: nr.startedAt,

@@ -13,6 +13,17 @@ export async function GET(req: NextRequest) {
             return new Response("Unauthorized", { status: 401 });
         }
 
+        // Find user by clerkId
+        const user = await prisma.user.findUnique({
+            where: { clerkId: userId },
+            select: { id: true }
+        });
+
+        if (!user) {
+            // Return empty list if user doesn't exist yet
+            return new Response(JSON.stringify({ workflow: [], total: 0, page: 1, limit: 10, totalPages: 0 }), { status: 200 });
+        }
+
         const page = parseInt(req.nextUrl.searchParams.get("page") || "1");
         const limit = parseInt(req.nextUrl.searchParams.get("limit") || "10");
         const offset = (page - 1) * limit;
@@ -23,13 +34,18 @@ export async function GET(req: NextRequest) {
 
         const [workflow , total] = await Promise.all([
             prisma.workflow.findMany({
-                where: { userId },
+                where: { userId: user.id },
                 skip: offset,
                 take: limit,
-                orderBy: { createdAt: "desc" },
+                orderBy: { updatedAt: "desc" },
+                include: {
+                    _count: {
+                        select: { runs: true }
+                    }
+                }
             }),
             prisma.workflow.count({
-                where: { userId },
+                where: { userId: user.id },
             }),
         ]);
 
@@ -49,6 +65,22 @@ export async function POST(req: NextRequest) {
             return new Response("Unauthorized", { status: 401 })
         }
 
+        // Ensure user exists in database (create if not exists)
+        let user = await prisma.user.findUnique({
+            where: { clerkId: userId },
+            select: { id: true }
+        });
+
+        if (!user) {
+            // Create user record if it doesn't exist
+            user = await prisma.user.create({
+                data: {
+                    clerkId: userId,
+                },
+                select: { id: true }
+            });
+        }
+
         const body = await req.json()
         const validated = workflowCreateSchema.parse(body)
 
@@ -59,7 +91,7 @@ export async function POST(req: NextRequest) {
 
         const workflow = await prisma.workflow.create({
             data: {
-                userId,
+                userId: user.id,
                 name: validated.name.trim().slice(0, 100),
                 nodes: validated.nodes as any,
                 edges: validated.edges as any,

@@ -18,10 +18,20 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // Find user by clerkId
+    const user = await prisma.user.findUnique({
+      where: { clerkId: userId },
+      select: { id: true }
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+
     const workflow = await prisma.workflow.findFirst({
       where: {
         id,
-        userId,
+        userId: user.id,
       },
     })
 
@@ -56,6 +66,16 @@ export async function PUT(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // Find user by clerkId
+    const user = await prisma.user.findUnique({
+      where: { clerkId: userId },
+      select: { id: true }
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+
     const body = await req.json()
     const validated = workflowUpdateSchema.parse(body)
 
@@ -81,7 +101,7 @@ export async function PUT(
     const updated = await prisma.workflow.update({
       where: {
         id,
-        userId,
+        userId: user.id,
       },
       data: updateData,
     })
@@ -117,10 +137,19 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const user = await prisma.user.findUnique({
+      where: { clerkId: userId },
+      select: { id: true },
+    })
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+
     const result = await prisma.workflow.delete({
       where: {
         id,
-        userId,
+        userId: user.id,
       },
     })
 

@@ -1,4 +1,4 @@
-import Transloadit from 'transloadit';
+import { Transloadit } from 'transloadit';
 
 // Initialize Transloadit client
 export const transloaditClient = new Transloadit({
@@ -11,7 +11,7 @@ export async function uploadFile(file: File, type: 'image' | 'video') {
   const formData = new FormData();
   formData.append('file', file);
   
-  const params = {
+  const params: any = {
     steps: {
       import: {
         robot: '/upload/handle',
@@ -43,7 +43,7 @@ export async function uploadFile(file: File, type: 'image' | 'video') {
     },
   };
 
-  const assembly = await transloaditClient.createAssembly({
+  const assembly = await (transloaditClient as any).createAssembly({
     params,
     files: { file },
   });
