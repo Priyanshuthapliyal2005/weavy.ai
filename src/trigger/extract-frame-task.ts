@@ -2,6 +2,16 @@ import { task, logger } from "@trigger.dev/sdk/v3";
 import ffmpeg from "fluent-ffmpeg";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import * as os from "node:os";
+import { Transloadit } from "transloadit";
+
+// Configure ffmpeg paths from environment variables (set by ffmpeg build extension)
+if (process.env.FFMPEG_PATH) {
+  ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
+}
+if (process.env.FFPROBE_PATH) {
+  ffmpeg.setFfprobePath(process.env.FFPROBE_PATH);
+}
 
 export interface ExtractFramePayload {
   videoUrl: string;
@@ -30,9 +40,10 @@ export const extractFrameTask = task({
         throw new Error(`Failed to fetch video: ${response.statusText}`);
       }
 
-      // Create temp paths
-      const inputPath = path.join("/tmp", `input_${Date.now()}.mp4`);
-      const outputPath = path.join("/tmp", `frame_${Date.now()}.jpg`);
+      // Create temp paths using OS temp directory
+      const tmpDir = os.tmpdir();
+      const inputPath = path.join(tmpDir, `input_${Date.now()}.mp4`);
+      const outputPath = path.join(tmpDir, `frame_${Date.now()}.jpg`);
 
       // Save input video
       const buffer = await response.arrayBuffer();
@@ -76,16 +87,60 @@ export const extractFrameTask = task({
 
       // Read the output file
       const frameBuffer = await fs.readFile(outputPath);
-      const base64Image = frameBuffer.toString("base64");
+
+      // Upload to Transloadit/R2
+      const transloadit = new Transloadit({
+        authKey: process.env.TRANSLOADIT_AUTH_KEY!,
+        authSecret: process.env.TRANSLOADIT_AUTH_SECRET!,
+      });
+
+      const assembly = await transloadit.createAssembly({
+        params: ({
+          steps: {
+            ':original': {
+              robot: '/upload/handle',
+            },
+            optimized: {
+              use: ':original',
+              robot: '/image/optimize',
+              progressive: true,
+              quality: 'medium',
+            },
+          },
+        } as any),
+        uploads: {
+          [`frame_${Date.now()}.jpg`]: frameBuffer,
+        },
+        waitForCompletion: true,
+      });
+
+      // Check for assembly errors
+      if (assembly.error) {
+        logger.error("Transloadit assembly failed", {
+          error: assembly.error,
+          assembly_id: assembly.assembly_id,
+        });
+        throw new Error(`Transloadit error: ${assembly.error}`);
+      }
+
+      const url = assembly.results?.optimized?.[0]?.ssl_url;
+
+      if (!url) {
+        logger.error("No output URL from Transloadit", {
+          assembly_id: assembly.assembly_id,
+          results: assembly.results,
+        });
+        throw new Error('Failed to get upload URL from Transloadit');
+      }
 
       // Clean up temp files
       await fs.unlink(inputPath).catch(() => {});
       await fs.unlink(outputPath).catch(() => {});
 
-      logger.info("Frame extraction completed");
+      logger.info("Frame extraction completed", { url, timestamp: seekTime });
 
       return {
-        output: `data:image/jpeg;base64,${base64Image}`,
+        output: url,
         timestamp: seekTime,
       };
     } catch (error) {
