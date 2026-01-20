@@ -176,7 +176,7 @@ function LLMNodeComponent({ id, data, selected }: NodeProps<LLMNode>) {
       const systemPrompt = systemPromptParts.join("\n\n")
 
       
-      const modelToUse = (data.model as string) || "gemini-2.5-flash"
+      const modelToUse = (data.model as string) || "gemini-3-flash-preview"
       
       const temperature = data.temperature ?? undefined
       const thinking = data.thinking ?? undefined
@@ -260,11 +260,11 @@ function LLMNodeComponent({ id, data, selected }: NodeProps<LLMNode>) {
 
   useEffect(() => {
     if (!data.model) {
-      updateNodeData(id, { model: "gemini-2.5-flash" })
+      updateNodeData(id, { model: "gemini-3-flash-preview" })
     }
   }, [id, data.model, updateNodeData])
   
-  const selectedModel = GEMINI_MODELS.find((m) => m.id === (data.model || "gemini-2.5-flash")) || GEMINI_MODELS[0]
+  const selectedModel = GEMINI_MODELS.find((m) => m.id === (data.model || "gemini-3-flash-preview")) || GEMINI_MODELS[0]
 
   
   const inputHandles = useMemo(() => {

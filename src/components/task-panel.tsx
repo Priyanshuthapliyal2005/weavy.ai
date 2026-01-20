@@ -49,13 +49,15 @@ export function TaskPanelContent({ selectedNode }: { selectedNode?: any }) {
                 <div className='relative'>
                   <select
                     id={`llm-model-${selectedNode.id}`}
-                    value={selectedNode.data?.model || 'gemini-2.0-flash-exp'}
+                    value={selectedNode.data?.model || 'gemini-3-flash-preview'}
                     onChange={(e) => updateNodeData(selectedNode.id, { model: e.target.value })}
                     className='w-full bg-[#2a2a2d] border border-[#3a3a3e] rounded px-3 py-2 text-sm text-white appearance-none cursor-pointer hover:border-white/20 transition-colors'
                   >
-                    <option value='gemini-2.0-flash-exp'>google/gemini-2.0-flash-exp</option>
-                    <option value='gemini-1.5-pro'>google/gemini-1.5-pro</option>
-                    <option value='gemini-1.5-flash'>google/gemini-1.5-flash</option>
+                    <option value='gemini-3-pro-preview'>google/gemini-3-pro-preview</option>
+                    <option value='gemini-3-flash-preview'>google/gemini-3-flash-preview</option>
+                    <option value='gemini-2.5-flash'>google/gemini-2.5-flash</option>
+                    <option value='gemini-2.5-pro'>google/gemini-2.5-pro</option>
+                    <option value='gemini-2.0-flash'>google/gemini-2.0-flash</option>
                   </select>
                   <ChevronDown
                     className='absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/50 pointer-events-none'
