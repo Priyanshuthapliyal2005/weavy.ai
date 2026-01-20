@@ -1,0 +1,123 @@
+{
+  "version": "1.0.0",
+  "name": "Product Marketing Kit Generator",
+  "nodes": [
+    {
+      "id": "text-1",
+      "type": "text",
+      "position": { "x": 120, "y": 120 },
+      "data": {
+        "label": "Text",
+        "type": "text",
+        "content": "Generate a short product description and 3 ad headlines. Use the provided image + extracted frame as context."
+      }
+    },
+    {
+      "id": "image-1",
+      "type": "image",
+      "position": { "x": 120, "y": 300 },
+      "data": {
+        "label": "Upload Image",
+        "type": "image",
+        "imageUrl": null,
+        "imageFile": null
+      }
+    },
+    {
+      "id": "video-1",
+      "type": "video",
+      "position": { "x": 120, "y": 480 },
+      "data": {
+        "label": "Upload Video",
+        "type": "video",
+        "videoUrl": null,
+        "videoFile": null
+      }
+    },
+    {
+      "id": "crop-1",
+      "type": "crop",
+      "position": { "x": 430, "y": 300 },
+      "data": {
+        "label": "Crop Image",
+        "type": "crop",
+        "xPercent": 10,
+        "yPercent": 10,
+        "widthPercent": 80,
+        "heightPercent": 80,
+        "isProcessing": false,
+        "outputUrl": null,
+        "error": null
+      }
+    },
+    {
+      "id": "extract-1",
+      "type": "extract",
+      "position": { "x": 430, "y": 480 },
+      "data": {
+        "label": "Extract Frame",
+        "type": "extract",
+        "timestamp": "50%",
+        "isProcessing": false,
+        "outputUrl": null,
+        "error": null
+      }
+    },
+    {
+      "id": "llm-1",
+      "type": "llm",
+      "position": { "x": 780, "y": 300 },
+      "data": {
+        "label": "Run Any LLM",
+        "type": "llm",
+        "model": "gemini-2.5-flash",
+        "imageInputCount": 2,
+        "isRunning": false,
+        "output": "",
+        "error": null
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-text-llm",
+      "source": "text-1",
+      "target": "llm-1",
+      "sourceHandle": "output",
+      "targetHandle": "prompt",
+      "type": "default"
+    },
+    {
+      "id": "e-image-crop",
+      "source": "image-1",
+      "target": "crop-1",
+      "sourceHandle": "output",
+      "targetHandle": "image_url",
+      "type": "default"
+    },
+    {
+      "id": "e-crop-llm-image1",
+      "source": "crop-1",
+      "target": "llm-1",
+      "sourceHandle": "output",
+      "targetHandle": "image_1",
+      "type": "default"
+    },
+    {
+      "id": "e-video-extract",
+      "source": "video-1",
+      "target": "extract-1",
+      "sourceHandle": "output",
+      "targetHandle": "video_url",
+      "type": "default"
+    },
+    {
+      "id": "e-extract-llm-image2",
+      "source": "extract-1",
+      "target": "llm-1",
+      "sourceHandle": "output",
+      "targetHandle": "image_2",
+      "type": "default"
+    }
+  ]
+}
