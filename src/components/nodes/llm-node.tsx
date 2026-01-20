@@ -1,26 +1,93 @@
 "use client"
 
 import type React from "react"
-import { memo, useCallback, useState, useMemo, useEffect } from "react"
-import { createPortal } from "react-dom"
+import { memo, useCallback, useState, useMemo, useEffect, useRef } from "react"
 import { type Node, type NodeProps } from "@xyflow/react"
-import { Bot, Play, Loader2, AlertCircle, ChevronDown, ChevronUp, Maximize2, Copy, X } from "lucide-react"
+import { Bot, Play, Loader2, AlertCircle, ExternalLink, X } from "lucide-react"
 import { useWorkflowStore } from "@/store/workflow-store"
 import { GEMINI_MODELS, type GeminiModel, type LLMNodeData } from "@/types/workflow"
 import { BaseNode } from "./base-node"
 import { HANDLE_COLORS, NODE_COLORS } from "@/constants/colors"
 import { HANDLE_IDS } from "@/constants/node-ids"
 import { ERROR_DISPLAY_TIMEOUT_MS } from "@/constants/ui"
+import { SIDEBAR_TABS } from "@/constants/sidebar"
 
 type LLMNode = Node<LLMNodeData, "llm">
 
+function isRateLimitLike(message: string): boolean {
+  const m = message.toLowerCase()
+  return (
+    message.includes("429") ||
+    m.includes("too many requests") ||
+    m.includes("quota") ||
+    m.includes("rate limit") ||
+    message.includes("rateLimitExceeded") ||
+    message.includes("RESOURCE_EXHAUSTED")
+  )
+}
+
+const RATE_LIMIT_FRIENDLY_MESSAGE =
+  "Rate limit due to heavy traffic. Please wait a moment and try again."
+
+function normalizeOutputValue(value: unknown): string {
+  if (typeof value !== "string") return ""
+  const trimmed = value.trim()
+  if (!trimmed) return ""
+  if (trimmed.toLowerCase() === "null") return ""
+  if (trimmed.toLowerCase() === "undefined") return ""
+  return value
+}
+
+function normalizeLlmError(message: string): string {
+  return message.length > 240 ? `${message.slice(0, 240)}…` : message
+}
+
 function LLMNodeComponent({ id, data, selected }: NodeProps<LLMNode>) {
-  const { updateNodeData, nodes, edges } = useWorkflowStore()
+  const { updateNodeData, nodes, edges, openGalleryForNode, setActiveTab } = useWorkflowStore()
   const [showModelDropdown, setShowModelDropdown] = useState(false)
   const [errorHandleId, setErrorHandleId] = useState<string | null>(null)
   const [showPromptError, setShowPromptError] = useState(false)
-  const [isExpanded, setIsExpanded] = useState(false)
-  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isTextModalOpen, setIsTextModalOpen] = useState(false)
+  const latestRunTokenRef = useRef(0)
+
+  useEffect(() => {
+    const hasRun = !!data.hasRun
+
+    // If the node has never been run, don't show any persisted rate-limit message/error.
+    if (!hasRun) {
+      const shouldClearOutput =
+        data.output === RATE_LIMIT_FRIENDLY_MESSAGE ||
+        String(data.output ?? "").trim().toLowerCase() === "null" ||
+        String(data.output ?? "").trim().toLowerCase() === "undefined"
+      if (data.error || shouldClearOutput) {
+        updateNodeData(id, { error: null, ...(shouldClearOutput ? { output: "" } : {}) })
+      }
+      return
+    }
+
+    if (!data.error) return
+
+    const rawError = String(data.error)
+    // After a run, never persist rate limit provider errors as a red banner; show a friendly message in output.
+    if (isRateLimitLike(rawError)) {
+      if (data.output) {
+        updateNodeData(id, { error: null })
+      } else {
+        updateNodeData(id, { error: null, output: RATE_LIMIT_FRIENDLY_MESSAGE })
+      }
+      return
+    }
+
+    // If we have a successful output, avoid showing stale error banners.
+    if (data.output && data.error) {
+      updateNodeData(id, { error: null })
+    }
+  }, [data.output, data.error, data.hasRun, id, updateNodeData])
+
+  const displayError = useMemo(() => {
+    if (!data.error) return null
+    return normalizeLlmError(String(data.error))
+  }, [data.error])
   
   const imageInputCount = data.imageInputCount || 1
 
@@ -33,6 +100,7 @@ function LLMNodeComponent({ id, data, selected }: NodeProps<LLMNode>) {
   )
 
   const runLLM = useCallback(async () => {
+    const runToken = ++latestRunTokenRef.current
     
     const incomingEdges = edges.filter((e) => e.target === id)
     let prompt = ""
@@ -63,7 +131,7 @@ function LLMNodeComponent({ id, data, selected }: NodeProps<LLMNode>) {
     }
 
     setErrorHandleId(null)
-    updateNodeData(id, { isRunning: true, error: null, output: "" })
+    updateNodeData(id, { isRunning: true, error: null, output: "", hasRun: true })
 
     try {
       const systemPromptParts: string[] = []
@@ -108,7 +176,7 @@ function LLMNodeComponent({ id, data, selected }: NodeProps<LLMNode>) {
       const systemPrompt = systemPromptParts.join("\n\n")
 
       
-      const modelToUse = "gemini-2.5-flash"
+      const modelToUse = (data.model as string) || "gemini-2.5-flash"
       
       const temperature = data.temperature ?? undefined
       const thinking = data.thinking ?? undefined
@@ -129,24 +197,69 @@ function LLMNodeComponent({ id, data, selected }: NodeProps<LLMNode>) {
       const result = await response.json()
 
       if (!response.ok) {
-        throw new Error(result.error || "Failed to run LLM")
+        const rawError = result?.error || "Failed to run LLM"
+        const rawString = typeof rawError === "string" ? rawError : JSON.stringify(rawError)
+
+        const looksRateLimited =
+          response.status === 429 ||
+          result?.code === "RATE_LIMIT" ||
+          rawString.includes("429") ||
+          rawString.toLowerCase().includes("too many requests") ||
+          rawString.toLowerCase().includes("quota") ||
+          rawString.toLowerCase().includes("rate limit") ||
+          rawString.includes("rateLimitExceeded") ||
+          rawString.includes("RESOURCE_EXHAUSTED")
+
+        if (looksRateLimited) {
+          // Avoid a persistent red error banner for transient rate limits.
+          if (latestRunTokenRef.current !== runToken) return
+          updateNodeData(id, {
+            output: RATE_LIMIT_FRIENDLY_MESSAGE,
+            isRunning: false,
+            error: null,
+          })
+          return
+        }
+
+        // Prevent massive provider payloads from flooding the UI.
+        const trimmed = rawString.length > 240 ? `${rawString.slice(0, 240)}…` : rawString
+        throw new Error(trimmed)
       }
 
-      updateNodeData(id, { output: result.output, isRunning: false })
-      setIsExpanded(false) 
+      if (latestRunTokenRef.current !== runToken) return
+      updateNodeData(id, { output: normalizeOutputValue(result?.output), isRunning: false, error: null })
     } catch (error) {
+      if (latestRunTokenRef.current !== runToken) return
+      const raw = error instanceof Error ? error.message : "Unknown error occurred"
+      const looksRateLimited =
+        raw.includes("429") ||
+        raw.toLowerCase().includes("too many requests") ||
+        raw.toLowerCase().includes("quota") ||
+        raw.toLowerCase().includes("rate limit") ||
+        raw.includes("rateLimitExceeded") ||
+        raw.includes("RESOURCE_EXHAUSTED")
+
+      if (looksRateLimited) {
+        updateNodeData(id, {
+          output: RATE_LIMIT_FRIENDLY_MESSAGE,
+          isRunning: false,
+          error: null,
+        })
+        return
+      }
+
       updateNodeData(id, {
-        error: error instanceof Error ? error.message : "Unknown error occurred",
+        error: raw.length > 240 ? `${raw.slice(0, 240)}…` : raw,
         isRunning: false,
+        output: "",
       })
     }
   }, [id, data.model, edges, nodes, updateNodeData])
 
-  
+  const normalizedOutput = useMemo(() => normalizeOutputValue(data.output), [data.output])
+
   useEffect(() => {
-    if (data.model && data.model !== "gemini-2.5-flash") {
-      updateNodeData(id, { model: "gemini-2.5-flash" })
-    } else if (!data.model) {
+    if (!data.model) {
       updateNodeData(id, { model: "gemini-2.5-flash" })
     }
   }, [id, data.model, updateNodeData])
@@ -160,9 +273,14 @@ function LLMNodeComponent({ id, data, selected }: NodeProps<LLMNode>) {
       { id: "system_prompt", color: HANDLE_COLORS.systemPrompt, title: "system prompt", top: "28%" },
     ]
 
-    
+    // Distribute image handles within the node height so they don't overflow
+    // when many image inputs are added.
+    const imageStart = 41
+    const imageEnd = 90
+    const imageSpacing = imageInputCount <= 1 ? 0 : (imageEnd - imageStart) / (imageInputCount - 1)
+
     for (let i = 1; i <= imageInputCount; i++) {
-      const topPercent = 41 + (i - 1) * 13 
+      const topPercent = imageStart + (i - 1) * imageSpacing
       handles.push({
         id: `image_${i}`,
         color: HANDLE_COLORS.image,
@@ -204,100 +322,62 @@ function LLMNodeComponent({ id, data, selected }: NodeProps<LLMNode>) {
     })
   }, [])
 
-  
-  const handleCopy = useCallback(async () => {
-    if (data.output) {
-      try {
-        await navigator.clipboard.writeText(data.output)
-        
-      } catch (error) {
-        console.error('Failed to copy:', error)
-      }
-    }
-  }, [data.output])
-
   return (
     <BaseNode
       id={id}
       selected={selected}
-      title="Run Any LLM"
+      title="Any LLM"
       nodeType="llm"
       data={data}
+      executing={!!data.isRunning}
       minWidth="383px"
       maxWidth="383px"
       inputHandles={inputHandles}
       outputHandles={[{ id: "output", color: HANDLE_COLORS.text, title: "Output" }]}
       errorHandleId={errorHandleId}
     >
-      <div 
+      <div
         data-nodrag
-        className={`w-full bg-[#353539] rounded-lg border border-panel-border p-4 group ${
-          isExpanded ? 'min-h-[360px]' : 'h-[360px] overflow-y-auto'
-        } custom-scrollbar relative select-text`}
-        style={{ cursor: 'text' }}
+        className="w-full bg-[#353539] rounded-lg border border-panel-border p-4 group custom-scrollbar relative select-text cursor-text overflow-y-auto min-h-56 max-h-72"
         onMouseDown={(e) => {
-          
           e.stopPropagation()
         }}
       >
-        {data.isRunning && !data.output ? (
-          
+        <div className="absolute right-2 top-2 flex items-center gap-1.5">
+          <div className="relative group">
+            <button
+              data-nodrag
+              onClick={() => {
+                openGalleryForNode(id)
+                setActiveTab(SIDEBAR_TABS.GALLERY)
+              }}
+              className="p-1 rounded hover:bg-white/10 text-white/60 hover:text-white transition-colors cursor-pointer"
+              aria-label="Open in gallery"
+            >
+              <ExternalLink className="w-4 h-4" strokeWidth={2} />
+            </button>
+            <div className="pointer-events-none absolute right-0 top-7 whitespace-nowrap rounded bg-black/70 px-2 py-1 text-[11px] text-white/90 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+              Open in gallery
+            </div>
+          </div>
+        </div>
+
+        {data.isRunning && !normalizedOutput ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <Loader2 className="w-8 h-8 text-white/70 animate-spin" strokeWidth={2} />
           </div>
-        ) : data.output ? (
+        ) : normalizedOutput ? (
           <>
-            <div 
+            <p
               data-nodrag
-              className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 z-10"
-            >
-              <button
-                data-nodrag
-                onClick={handleCopy}
-                className="p-1.5 hover:bg-white/10 rounded cursor-pointer"
-                title="Copy"
-              >
-                <Copy className="w-4 h-4 text-white/70 hover:text-white" strokeWidth={2} />
-              </button>
-              <button
-                data-nodrag
-                onClick={() => setIsModalOpen(true)}
-                className="p-1.5 hover:bg-white/10 rounded cursor-pointer"
-                title="Maximize"
-              >
-                <Maximize2 className="w-4 h-4 text-white/70 hover:text-white" strokeWidth={2} />
-              </button>
-            </div>
-            
-            <p 
-              data-nodrag
-              className="text-sm text-panel-text whitespace-pre-wrap w-full pr-2 select-text"
+              className="text-sm text-panel-text whitespace-pre-wrap w-full pr-2 pt-8 select-text"
               onMouseDown={(e) => {
-                
                 e.stopPropagation()
               }}
+              onDoubleClick={() => setIsTextModalOpen(true)}
             >
-              {data.output}
+              {normalizedOutput}
             </p>
-            {data.output.length > 500 && (
-              <div 
-                data-nodrag
-                className={`flex justify-center mt-2 opacity-0 group-hover:opacity-100 transition-opacity ${!isExpanded ? 'sticky bottom-0 pt-2 pb-0' : ''}`}
-              >
-                <button
-                  data-nodrag
-                  onClick={() => setIsExpanded(!isExpanded)}
-                  className="flex items-center gap-1 text-xs text-white/70 hover:text-white font-light cursor-pointer bg-[#212126] px-2 py-1 rounded"
-                >
-                  {isExpanded ? 'Show less' : 'Show more'}
-                  {isExpanded ? (
-                    <ChevronUp className="w-3 h-3" strokeWidth={2} />
-                  ) : (
-                    <ChevronDown className="w-3 h-3" strokeWidth={2} />
-                  )}
-                </button>
-              </div>
-            )}
           </>
         ) : (
           <p className="text-sm text-panel-text-muted">The generated text will appear here</p>
@@ -314,76 +394,68 @@ function LLMNodeComponent({ id, data, selected }: NodeProps<LLMNode>) {
           </span>
         </button>
 
-        <button
-          onClick={runLLM}
-          disabled={data.isRunning}
-          className="flex items-center gap-1.5 px-2 py-1 bg-white/10 border border-white/50 text-white/90 text-xs font-light rounded transition-colors hover:bg-white/15 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          {data.isRunning ? (
-            <>
-              <Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} />
-              <span>Running...</span>
-            </>
-          ) : (
-            <>
-              <Play className="w-3 h-3" strokeWidth={2} />
-              <span>Run Model</span>
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={runLLM}
+            disabled={data.isRunning}
+            className="flex items-center gap-1.5 px-2 py-1 bg-white/10 border border-white/50 text-white/90 text-xs font-light rounded transition-colors hover:bg-white/15 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {data.isRunning ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} />
+                <span>Running...</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-3 h-3" strokeWidth={2} />
+                <span>Run Model</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
-      {data.error && (
-        <div className="mt-4 flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-          <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
-          <p className="text-sm text-red-300">{data.error}</p>
+      {displayError && !normalizedOutput && (
+        <div className="mt-4 relative flex items-start gap-2 p-3 pr-10 bg-red-500/10 border border-red-500/30 rounded-lg max-h-28 overflow-auto custom-scrollbar">
+          <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+          <p className="text-sm text-red-300">{displayError}</p>
+          <button
+            onClick={() => updateNodeData(id, { error: null })}
+            className="absolute right-2 top-2 p-1 rounded hover:bg-white/10 text-white/60 hover:text-white transition-colors cursor-pointer"
+            aria-label="Dismiss error"
+            type="button"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
       {showPromptError && errorHandleId === "prompt" && (
         <div className="mt-4 flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-          <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+          <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
           <p className="text-sm text-red-300">Prompt is required. Please connect a Text Node or LLM Node to 'prompt *'.</p>
         </div>
       )}
 
-      {isModalOpen && data.output && typeof window !== 'undefined' && createPortal(
-        <div 
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60"
-          onClick={() => setIsModalOpen(false)}
-        >
-          <div 
-            className="bg-[#212126] border border-panel-border rounded-lg shadow-xl flex flex-col"
-            style={{ width: '70vw', height: '70vh' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between p-4 border-b border-panel-border">
-              <h3 className="text-sm font-medium text-white">Response</h3>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleCopy}
-                  className="p-1.5 hover:bg-white/10 rounded transition-colors cursor-pointer"
-                  title="Copy"
-                >
-                  <Copy className="w-4 h-4 text-white/70 hover:text-white" strokeWidth={2} />
-                </button>
-                <button
-                  onClick={() => setIsModalOpen(false)}
-                  className="p-1.5 hover:bg-white/10 rounded transition-colors cursor-pointer"
-                >
-                  <X className="w-4 h-4 text-white/70 hover:text-white" strokeWidth={2} />
-                </button>
-              </div>
+      {isTextModalOpen && normalizedOutput ? (
+        <div className="fixed inset-0 z-20000 flex items-center justify-center bg-black/60 p-4" onMouseDown={() => setIsTextModalOpen(false)}>
+          <div className="w-full max-w-2xl bg-[#1e1e22] border border-[#2a2a2e] rounded-lg shadow-2xl overflow-hidden" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-3 py-2 border-b border-[#2a2a2e]">
+              <div className="text-sm text-white/90 truncate">Any LLM</div>
+              <button
+                onClick={() => setIsTextModalOpen(false)}
+                className="p-1 rounded hover:bg-white/10 text-white/70 hover:text-white transition-colors cursor-pointer"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            
-            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar select-text" style={{ cursor: 'text' }}>
-              <div className="text-sm text-panel-text whitespace-pre-wrap">
-                {formatMarkdown(data.output)}
-              </div>
+            <div className="p-3 max-h-[70vh] overflow-auto custom-scrollbar">
+              <pre className="whitespace-pre-wrap wrap-break-word text-[12px] text-white/80">{normalizedOutput}</pre>
             </div>
           </div>
-        </div>,
-        document.body
-      )}
+        </div>
+      ) : null}
+
     </BaseNode>
   )
 }

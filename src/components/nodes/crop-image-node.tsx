@@ -23,13 +23,16 @@ type CropImageNode = Node<
 >;
 
 function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>) {
-  const { updateNodeData, edges, nodes } = useWorkflowStore();
+  const { updateNodeData, edges, executionResults, executeWorkflow } = useWorkflowStore();
   const [localValues, setLocalValues] = useState({
     xPercent: data.xPercent ?? 0,
     yPercent: data.yPercent ?? 0,
     widthPercent: data.widthPercent ?? 100,
     heightPercent: data.heightPercent ?? 100,
   });
+  
+  // Get execution result for this node
+  const executionOutput = executionResults.get(id);
 
   // Check if inputs are connected
   const incomingEdges = edges.filter((e) => e.target === id);
@@ -42,10 +45,32 @@ function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>
   const handleValueChange = useCallback(
     (field: string, value: number) => {
       const clampedValue = Math.max(0, Math.min(100, value));
-      setLocalValues(prev => ({ ...prev, [field]: clampedValue }));
-      updateNodeData(id, { [field]: clampedValue });
+      
+      // Calculate new values with bounds validation
+      let newValues = { ...localValues, [field]: clampedValue };
+      
+      // If x + width > 100, adjust width
+      if (newValues.xPercent + newValues.widthPercent > 100) {
+        if (field === 'xPercent') {
+          newValues.widthPercent = Math.max(1, 100 - newValues.xPercent);
+        } else if (field === 'widthPercent') {
+          newValues.widthPercent = Math.max(1, 100 - newValues.xPercent);
+        }
+      }
+      
+      // If y + height > 100, adjust height
+      if (newValues.yPercent + newValues.heightPercent > 100) {
+        if (field === 'yPercent') {
+          newValues.heightPercent = Math.max(1, 100 - newValues.yPercent);
+        } else if (field === 'heightPercent') {
+          newValues.heightPercent = Math.max(1, 100 - newValues.yPercent);
+        }
+      }
+
+      setLocalValues(newValues);
+      updateNodeData(id, newValues);
     },
-    [id, updateNodeData]
+    [id, localValues, updateNodeData]
   );
 
   const handleProcess = useCallback(async () => {
@@ -64,43 +89,47 @@ function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>
       outputUrl: null,
     });
 
-    // Simulate processing (replace with actual Trigger.dev call)
-    setTimeout(() => {
+    try {
+      await executeWorkflow([id]);
+    } catch (e) {
+      updateNodeData(id, {
+        error: e instanceof Error ? e.message : 'Failed to crop image',
+      });
+    } finally {
       updateNodeData(id, {
         isProcessing: false,
-        outputUrl: 'https://example.com/cropped-image.jpg', // Placeholder
       });
-    }, 2000);
-  }, [id, hasImageConnection, updateNodeData]);
+    }
+  }, [id, hasImageConnection, updateNodeData, executeWorkflow]);
 
   const inputHandles = [
     {
       id: HANDLE_IDS.IMAGE_URL,
-      label: 'image',
+      title: 'image',
       color: HANDLE_COLORS.IMAGE,
       position: 'left' as const,
     },
     {
       id: HANDLE_IDS.X_PERCENT,
-      label: 'x%',
+      title: 'x%',
       color: HANDLE_COLORS.NUMBER,
       position: 'left' as const,
     },
     {
       id: HANDLE_IDS.Y_PERCENT,
-      label: 'y%',
+      title: 'y%',
       color: HANDLE_COLORS.NUMBER,
       position: 'left' as const,
     },
     {
       id: HANDLE_IDS.WIDTH_PERCENT,
-      label: 'width%',
+      title: 'width%',
       color: HANDLE_COLORS.NUMBER,
       position: 'left' as const,
     },
     {
       id: HANDLE_IDS.HEIGHT_PERCENT,
-      label: 'height%',
+      title: 'height%',
       color: HANDLE_COLORS.NUMBER,
       position: 'left' as const,
     },
@@ -109,7 +138,7 @@ function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>
   const outputHandles = [
     {
       id: HANDLE_IDS.OUTPUT,
-      label: 'cropped',
+      title: 'cropped',
       color: HANDLE_COLORS.IMAGE,
       position: 'right' as const,
     },
@@ -118,10 +147,12 @@ function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>
   return (
     <BaseNode
       id={id}
-      label={data.label || 'Crop Image'}
-      icon={<Crop size={16} />}
-      color="#f59e0b"
+      title="Crop Image"
+      titleIcon={Crop}
+      nodeType="crop"
+      data={data as any}
       selected={selected}
+      executing={!!data.isProcessing}
       inputHandles={inputHandles}
       outputHandles={outputHandles}
     >
@@ -129,8 +160,9 @@ function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>
         <div className="grid grid-cols-2 gap-3">
           {/* X Position */}
           <div>
-            <label className="text-xs text-gray-600 block mb-1">X Position (%)</label>
+            <label htmlFor={`${id}-crop-x`} className="text-xs text-white/60 block mb-1">X Position (%)</label>
             <input
+              id={`${id}-crop-x`}
               type="number"
               min="0"
               max="100"
@@ -139,16 +171,17 @@ function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>
               disabled={hasXConnection}
               className={`w-full px-2 py-1 text-sm border rounded ${
                 hasXConnection 
-                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                  : 'bg-white border-gray-300'
+                  ? 'bg-white/5 text-white/30 cursor-not-allowed border-white/10' 
+                  : 'bg-[#2a2a2d] border-white/10 text-white placeholder:text-white/30 focus:outline-none focus:border-white/20'
               }`}
             />
           </div>
 
           {/* Y Position */}
           <div>
-            <label className="text-xs text-gray-600 block mb-1">Y Position (%)</label>
+            <label htmlFor={`${id}-crop-y`} className="text-xs text-white/60 block mb-1">Y Position (%)</label>
             <input
+              id={`${id}-crop-y`}
               type="number"
               min="0"
               max="100"
@@ -157,16 +190,17 @@ function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>
               disabled={hasYConnection}
               className={`w-full px-2 py-1 text-sm border rounded ${
                 hasYConnection 
-                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                  : 'bg-white border-gray-300'
+                  ? 'bg-white/5 text-white/30 cursor-not-allowed border-white/10' 
+                  : 'bg-[#2a2a2d] border-white/10 text-white placeholder:text-white/30 focus:outline-none focus:border-white/20'
               }`}
             />
           </div>
 
           {/* Width */}
           <div>
-            <label className="text-xs text-gray-600 block mb-1">Width (%)</label>
+            <label htmlFor={`${id}-crop-width`} className="text-xs text-white/60 block mb-1">Width (%)</label>
             <input
+              id={`${id}-crop-width`}
               type="number"
               min="0"
               max="100"
@@ -175,16 +209,17 @@ function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>
               disabled={hasWidthConnection}
               className={`w-full px-2 py-1 text-sm border rounded ${
                 hasWidthConnection 
-                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                  : 'bg-white border-gray-300'
+                  ? 'bg-white/5 text-white/30 cursor-not-allowed border-white/10' 
+                  : 'bg-[#2a2a2d] border-white/10 text-white placeholder:text-white/30 focus:outline-none focus:border-white/20'
               }`}
             />
           </div>
 
           {/* Height */}
           <div>
-            <label className="text-xs text-gray-600 block mb-1">Height (%)</label>
+            <label htmlFor={`${id}-crop-height`} className="text-xs text-white/60 block mb-1">Height (%)</label>
             <input
+              id={`${id}-crop-height`}
               type="number"
               min="0"
               max="100"
@@ -193,8 +228,8 @@ function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>
               disabled={hasHeightConnection}
               className={`w-full px-2 py-1 text-sm border rounded ${
                 hasHeightConnection 
-                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                  : 'bg-white border-gray-300'
+                  ? 'bg-white/5 text-white/30 cursor-not-allowed border-white/10' 
+                  : 'bg-[#2a2a2d] border-white/10 text-white placeholder:text-white/30 focus:outline-none focus:border-white/20'
               }`}
             />
           </div>
@@ -208,7 +243,7 @@ function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>
             w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg
             font-medium text-sm transition-all
             ${data.isProcessing || !hasImageConnection
-              ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              ? 'bg-white/5 text-white/30 cursor-not-allowed border border-white/10'
               : 'bg-amber-500 hover:bg-amber-600 text-white'
             }
           `}
@@ -219,20 +254,23 @@ function CropImageNodeComponent({ id, data, selected }: NodeProps<CropImageNode>
 
         {/* Error Display */}
         {data.error && (
-          <div className="flex items-start gap-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">
-            <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+          <div className="flex items-start gap-2 p-2 bg-red-500/10 border border-red-500/30 rounded text-xs text-red-300">
+            <AlertCircle size={14} className="shrink-0 mt-0.5" />
             <span>{data.error}</span>
           </div>
         )}
 
         {/* Output Preview */}
-        {data.outputUrl && (
-          <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded">
-            <p className="text-xs text-green-700 font-medium mb-1">Cropped Image:</p>
+        {(executionOutput || data.outputUrl) && (
+          <div className="mt-3 p-2 bg-emerald-500/10 border border-emerald-500/30 rounded">
+            <p className="text-xs text-emerald-300 font-medium mb-1">Cropped Image:</p>
             <img 
-              src={data.outputUrl} 
+              src={executionOutput || data.outputUrl} 
               alt="Cropped" 
-              className="w-full rounded"
+              className="w-full rounded border border-white/10"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
             />
           </div>
         )}

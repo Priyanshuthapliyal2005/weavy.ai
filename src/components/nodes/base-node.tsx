@@ -1,10 +1,11 @@
 'use client';
 
-import React, { memo, useCallback, useRef, useState } from 'react';
+import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { Handle, Position, useReactFlow } from '@xyflow/react';
 import { MoreHorizontal, Lock } from 'lucide-react';
 import { useWorkflowStore } from '@/store/workflow-store';
 import { NODE_COLORS, HANDLE_COLORS } from '@/constants/colors';
+import { HANDLE_IDS } from '@/constants/node-ids';
 import { cn } from '@/lib/utils';
 
 interface HandleConfig {
@@ -20,17 +21,22 @@ interface BaseNodeProps {
   selected: boolean;
   title: string;
   titleIcon?: React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
-  nodeType: 'text' | 'image' | 'llm';
+  nodeType: 'text' | 'image' | 'llm' | 'video' | 'crop' | 'extract';
   data: Record<string, unknown>;
   children: React.ReactNode;
   inputHandles?: HandleConfig[];
   outputHandles?: HandleConfig[];
-  onDuplicate?: (nodeId: string, nodeType: 'text' | 'image' | 'llm', data: Record<string, unknown>) => void;
+  onDuplicate?: (
+    nodeId: string,
+    nodeType: 'text' | 'image' | 'llm' | 'video' | 'crop' | 'extract',
+    data: Record<string, unknown>
+  ) => void;
   minWidth?: string;
   maxWidth?: string;
   errorHandleId?: string | null;
   viewMode?: 'single' | 'all';
   onViewModeChange?: (mode: 'single' | 'all') => void;
+  executing?: boolean;
 }
 
 function BaseNodeComponent({
@@ -45,13 +51,55 @@ function BaseNodeComponent({
   outputHandles = [{ id: 'output', color: NODE_COLORS.text }],
   minWidth = '383px',
   maxWidth = '383px',
+  executing = false,
 }: BaseNodeProps) {
   const { deleteNode, updateNodeData, addNode } = useWorkflowStore();
   const { getNode } = useReactFlow();
   const menuRef = useRef<HTMLDivElement>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isNodeHovered, setIsNodeHovered] = useState(false);
+  const [hoveredInputHandles, setHoveredInputHandles] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [hoveredOutputHandles, setHoveredOutputHandles] = useState<Set<string>>(
+    () => new Set()
+  );
   const displayTitle = (data?.label as string) || title;
   const isLocked = (data?.locked as boolean) || false;
+
+  const getInputLabel = useCallback((handle: HandleConfig) => {
+    if (handle.title) return handle.title;
+
+    if (handle.id === HANDLE_IDS.SYSTEM_PROMPT) return 'System';
+    if (handle.id === HANDLE_IDS.PROMPT) return 'Prompt';
+    if (handle.id === HANDLE_IDS.USER_MESSAGE) return 'User';
+    if (handle.id === HANDLE_IDS.IMAGES) return 'Images';
+    if (handle.id?.startsWith('image_')) {
+      const suffix = handle.id.split('_')[1];
+      const n = Number.parseInt(suffix || '', 10);
+      if (Number.isFinite(n)) return `Image ${n}`;
+      return 'Image';
+    }
+
+    // Fallback: make ids like "negative_prompt" readable.
+    return handle.id
+      ? handle.id
+          .replace(/_/g, ' ')
+          .replace(/\b\w/g, (m) => m.toUpperCase())
+      : 'Input';
+  }, []);
+
+  const getOutputLabel = useCallback((handle: HandleConfig) => {
+    if (handle.title) return handle.title;
+    if (handle.id === HANDLE_IDS.OUTPUT) return 'Result';
+    return handle.id
+      ? handle.id
+          .replace(/_/g, ' ')
+          .replace(/\b\w/g, (m) => m.toUpperCase())
+      : 'Output';
+  }, []);
+
+  const showPortLabels = selected || isNodeHovered;
 
   const getNodeColor = () => {
     return NODE_COLORS[nodeType] || '#d3d3d4';
@@ -79,7 +127,8 @@ function BaseNodeComponent({
         className={cn(
           'rounded-lg transition-all duration-200',
           selected ? 'ring-2 ring-white/30' : '',
-          isLocked ? 'opacity-80' : ''
+          isLocked ? 'opacity-80' : '',
+          executing ? 'weavy-node-executing' : ''
         )}
         style={{
           backgroundColor: '#212126',
@@ -87,6 +136,8 @@ function BaseNodeComponent({
           minWidth,
           maxWidth,
         }}
+        onMouseEnter={() => setIsNodeHovered(true)}
+        onMouseLeave={() => setIsNodeHovered(false)}
       >
         {/* Header */}
         <div
@@ -158,21 +209,69 @@ function BaseNodeComponent({
           const handleColor = handle.color || HANDLE_COLORS.default;
           const handleTop = handle.top || '50%';
           const handlePosition = handle.position === 'right' ? Position.Right : Position.Left;
+          const isHovered = hoveredInputHandles.has(handle.id);
+          const labelText = getInputLabel(handle);
+          const shouldShowLabel = (showPortLabels || isHovered) && !!labelText;
 
           return (
-            <Handle
-              key={`input-${handle.id}`}
-              type="target"
-              position={handlePosition}
-              id={handle.id}
-              style={{
-                top: handleTop,
-                backgroundColor: handleColor,
-                width: 12,
-                height: 12,
-                border: '2px solid #212126',
-              }}
-            />
+            <React.Fragment key={`input-${handle.id}`}>
+              <Handle
+                type="target"
+                position={handlePosition}
+                id={handle.id}
+                style={{
+                  top: handleTop,
+                  backgroundColor: handleColor,
+                  width: 12,
+                  height: 12,
+                  border: '2px solid #212126',
+                }}
+                onMouseEnter={() =>
+                  setHoveredInputHandles((prev) => {
+                    const next = new Set(prev);
+                    next.add(handle.id);
+                    return next;
+                  })
+                }
+                onMouseLeave={() =>
+                  setHoveredInputHandles((prev) => {
+                    const next = new Set(prev);
+                    next.delete(handle.id);
+                    return next;
+                  })
+                }
+              />
+              {shouldShowLabel ? (
+                <div
+                  className="absolute font-mono whitespace-nowrap pointer-events-none select-none rounded px-1.5 py-0.5 bg-black/50 border border-white/10"
+                  style={
+                    handlePosition === Position.Left
+                      ? {
+                          top: handleTop,
+                          transform: 'translateY(calc(-50% - 8px))',
+                          right: '100%',
+                          marginRight: 14,
+                          fontSize: 12,
+                          color: handleColor,
+                          textAlign: 'right',
+                          opacity: 1,
+                        }
+                      : {
+                          top: handleTop,
+                          transform: 'translateY(calc(-50% - 8px))',
+                          left: '100%',
+                          marginLeft: 14,
+                          fontSize: 12,
+                          color: handleColor,
+                          textAlign: 'left',
+                          opacity: 1,
+                        }
+                  }
+                >
+                  {labelText}
+                </div>
+              ) : null}
+            </React.Fragment>
           );
         })}
 
@@ -180,21 +279,70 @@ function BaseNodeComponent({
         {outputHandles.map((handle) => {
           const handleColor = handle.color || NODE_COLORS[nodeType] || HANDLE_COLORS.default;
           const handlePosition = handle.position === 'left' ? Position.Left : Position.Right;
+          const handleTop = handle.top || '50%';
+          const isHovered = hoveredOutputHandles.has(handle.id);
+          const labelText = getOutputLabel(handle);
+          const shouldShowLabel = (showPortLabels || isHovered) && !!labelText;
 
           return (
-            <Handle
-              key={`output-${handle.id}`}
-              type="source"
-              position={handlePosition}
-              id={handle.id}
-              style={{
-                top: '50%',
-                backgroundColor: handleColor,
-                width: 12,
-                height: 12,
-                border: '2px solid #212126',
-              }}
-            />
+            <React.Fragment key={`output-${handle.id}`}>
+              <Handle
+                type="source"
+                position={handlePosition}
+                id={handle.id}
+                style={{
+                  top: handleTop,
+                  backgroundColor: handleColor,
+                  width: 12,
+                  height: 12,
+                  border: '2px solid #212126',
+                }}
+                onMouseEnter={() =>
+                  setHoveredOutputHandles((prev) => {
+                    const next = new Set(prev);
+                    next.add(handle.id);
+                    return next;
+                  })
+                }
+                onMouseLeave={() =>
+                  setHoveredOutputHandles((prev) => {
+                    const next = new Set(prev);
+                    next.delete(handle.id);
+                    return next;
+                  })
+                }
+              />
+              {shouldShowLabel ? (
+                <div
+                  className="absolute font-mono whitespace-nowrap pointer-events-none select-none rounded px-1.5 py-0.5 bg-black/50 border border-white/10"
+                  style={
+                    handlePosition === Position.Left
+                      ? {
+                          top: handleTop,
+                          transform: 'translateY(calc(-50% - 18px))',
+                          right: '100%',
+                          marginRight: 14,
+                          fontSize: 12,
+                          color: handleColor,
+                          textAlign: 'right',
+                          opacity: 1,
+                        }
+                      : {
+                          top: handleTop,
+                          transform: 'translateY(calc(-50% - 18px))',
+                          left: '100%',
+                          marginLeft: 14,
+                          fontSize: 12,
+                          color: handleColor,
+                          textAlign: 'left',
+                          opacity: 1,
+                        }
+                  }
+                >
+                  {labelText}
+                </div>
+              ) : null}
+            </React.Fragment>
           );
         })}
       </div>

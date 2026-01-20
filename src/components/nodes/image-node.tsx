@@ -3,19 +3,13 @@
 import type React from 'react';
 import { memo, useCallback, useRef, useState } from 'react';
 import { type Node, type NodeProps } from '@xyflow/react';
-import { Upload, Download, Grid, Square, Loader2 } from 'lucide-react';
+import { Upload, Grid, Square, Loader2, X } from 'lucide-react';
 import { useWorkflowStore } from '@/store/workflow-store';
 import toast from 'react-hot-toast';
 import { BaseNode } from './base-node';
 import { HANDLE_COLORS } from '@/constants/colors';
 import { HANDLE_IDS } from '@/constants/node-ids';
-import {
-  NODE_MIN_WIDTH,
-  NODE_MAX_WIDTH,
-  IMAGE_DISPLAY_MIN_HEIGHT,
-  DOWNLOAD_STAGGER_DELAY_MS,
-} from '@/constants/ui';
-import { downloadFile } from '@/helpers/file-handling';
+import { NODE_MIN_WIDTH, NODE_MAX_WIDTH } from '@/constants/ui';
 import { readFileAsDataURL } from '@/helpers/file-handling';
 
 type ImageNode = Node<
@@ -103,44 +97,14 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<ImageNode>) {
     [id, updateNodeData, images, viewMode]
   );
 
-  const handleDownload = useCallback(
-    (imageUrl: string, imageFile: File | null) => {
-      let url: string | null = null;
-      try {
-        if (imageFile) {
-          url = URL.createObjectURL(imageFile);
-          downloadFile(url, imageFile.name || 'image.png');
-        } else if (imageUrl) {
-          downloadFile(imageUrl, 'image.png');
-        }
-      } finally {
-        if (url) {
-          URL.revokeObjectURL(url);
-        }
-      }
-    },
-    []
-  );
-
-  const handleDownloadAll = useCallback(() => {
-    images.forEach((img, index) => {
-      setTimeout(() => {
-        let url: string | null = null;
-        try {
-          if (img.file) {
-            url = URL.createObjectURL(img.file);
-            downloadFile(url, img.file.name || `image-${index + 1}.png`);
-          } else if (img.url) {
-            downloadFile(img.url, `image-${index + 1}.png`);
-          }
-        } finally {
-          if (url) {
-            URL.revokeObjectURL(url);
-          }
-        }
-      }, index * DOWNLOAD_STAGGER_DELAY_MS);
+  const handleClearAll = useCallback(() => {
+    updateNodeData(id, {
+      images: [],
+      imageUrl: null,
+      imageFile: null,
+      viewMode: 'single',
     });
-  }, [images]);
+  }, [id, updateNodeData]);
 
   const handleLinkSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -223,10 +187,7 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<ImageNode>) {
       <div className='flex flex-col gap-3'>
         {images.length > 0 ? (
           <>
-            <div
-              className='relative w-full rounded-lg border border-panel-border overflow-hidden bg-[#353539]'
-              style={{ minHeight: `${IMAGE_DISPLAY_MIN_HEIGHT}px` }}
-            >
+            <div className='relative w-full h-90 rounded-lg border border-panel-border overflow-hidden bg-[#353539]'>
               <div className='absolute top-2 left-2 right-2 z-10 flex items-center justify-between pointer-events-none'>
                 <button
                   onClick={() =>
@@ -245,32 +206,38 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<ImageNode>) {
                 </button>
                 {viewMode === 'all' && images.length > 0 ? (
                   <button
-                    onClick={handleDownloadAll}
-                    className='p-1.5 rounded bg-black/60 backdrop-blur-sm border border-white/20 hover:bg-black/80 text-white transition-colors cursor-pointer pointer-events-auto'
-                    title='Download all'
+                    onClick={handleClearAll}
+                    className='p-1.5 rounded bg-red-500/70 backdrop-blur-sm border border-red-400/40 hover:bg-red-500 text-white transition-colors cursor-pointer pointer-events-auto'
+                    title='Remove all'
                   >
-                    <Download className='w-4 h-4' />
+                    <X className='w-4 h-4' />
                   </button>
                 ) : currentImage ? (
                   <button
-                    onClick={() =>
-                      handleDownload(currentImage.url, currentImage.file)
-                    }
-                    className='p-1.5 rounded bg-black/60 backdrop-blur-sm border border-white/20 hover:bg-black/80 text-white transition-colors cursor-pointer pointer-events-auto'
-                    title='Download current'
+                    onClick={() => handleRemoveImage(currentImage.id)}
+                    className='p-1.5 rounded bg-red-500/70 backdrop-blur-sm border border-red-400/40 hover:bg-red-500 text-white transition-colors cursor-pointer pointer-events-auto'
+                    title='Remove image'
                   >
-                    <Download className='w-4 h-4' />
+                    <X className='w-4 h-4' />
                   </button>
                 ) : null}
               </div>
 
               {viewMode === 'all' && images.length > 1 ? (
-                <div className='grid grid-cols-2 gap-2 p-2 min-h-[360px]'>
+                <div className='grid grid-cols-2 gap-2 p-2 pt-12 min-h-90'>
                   {images.map((img) => (
                     <div
                       key={img.id}
                       className='relative group aspect-square bg-[#212126] rounded border border-panel-border overflow-hidden flex items-center justify-center'
                     >
+                      <button
+                        type='button'
+                        onClick={() => handleRemoveImage(img.id)}
+                        className='absolute top-2 right-2 z-10 bg-red-500/80 hover:bg-red-500 text-white rounded-full p-1 transition-colors opacity-0 group-hover:opacity-100'
+                        title='Remove image'
+                      >
+                        <X size={14} />
+                      </button>
                       <img
                         src={img.url}
                         alt='Uploaded'
@@ -280,12 +247,12 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<ImageNode>) {
                   ))}
                 </div>
               ) : (
-                <div className='relative group w-full min-h-[360px] flex items-center justify-center'>
+                <div className='relative group w-full h-90 flex items-center justify-center'>
                   {currentImage && (
                     <img
                       src={currentImage.url}
                       alt='Uploaded'
-                      className='max-w-full max-h-full object-contain'
+                      className='w-full h-full object-contain'
                     />
                   )}
                 </div>
@@ -306,28 +273,10 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<ImageNode>) {
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onClick={() => !isUploading && fileInputRef.current?.click()}
-            className='w-full bg-[#353539] rounded-lg border border-panel-border flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-white/20 transition-colors relative overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed'
-            style={{
-              minHeight: `${IMAGE_DISPLAY_MIN_HEIGHT}px`,
-              backgroundImage: `
-                linear-gradient(45deg, ${
-                  selected ? '#2b2b2f' : '#212126'
-                } 25%, transparent 25%),
-                linear-gradient(-45deg, ${
-                  selected ? '#2b2b2f' : '#212126'
-                } 25%, transparent 25%),
-                linear-gradient(45deg, transparent 75%, ${
-                  selected ? '#2b2b2f' : '#212126'
-                } 75%),
-                linear-gradient(-45deg, transparent 75%, ${
-                  selected ? '#2b2b2f' : '#212126'
-                } 75%)
-              `,
-              backgroundSize: '20px 20px',
-              backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
-              opacity: isUploading ? 0.5 : 1,
-              pointerEvents: isUploading ? 'none' : 'auto',
-            }}
+            className={
+              'w-full min-h-90 bg-[#353539] rounded-lg border border-panel-border flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-white/20 transition-colors relative overflow-hidden ' +
+              (isUploading ? 'opacity-50 pointer-events-none' : '')
+            }
           >
             {isUploading ? (
               <Loader2 className='w-6 h-6 text-white animate-spin' />
@@ -359,6 +308,7 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<ImageNode>) {
         onChange={handleFileUpload}
         className='hidden'
         multiple
+        aria-label='Upload image'
       />
     </BaseNode>
   );

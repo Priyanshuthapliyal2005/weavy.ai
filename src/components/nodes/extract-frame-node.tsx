@@ -20,8 +20,11 @@ type ExtractFrameNode = Node<
 >;
 
 function ExtractFrameNodeComponent({ id, data, selected }: NodeProps<ExtractFrameNode>) {
-  const { updateNodeData, edges, nodes } = useWorkflowStore();
+  const { updateNodeData, edges, executionResults, executeWorkflow } = useWorkflowStore();
   const [localTimestamp, setLocalTimestamp] = useState(data.timestamp ?? '0');
+  
+  // Get execution result for this node
+  const executionOutput = executionResults.get(id);
 
   // Check if inputs are connected
   const incomingEdges = edges.filter((e) => e.target === id);
@@ -73,25 +76,26 @@ function ExtractFrameNodeComponent({ id, data, selected }: NodeProps<ExtractFram
       outputUrl: null,
     });
 
-    // Simulate processing (replace with actual Trigger.dev call)
-    setTimeout(() => {
+    try {
+      await executeWorkflow([id]);
+    } catch (e) {
       updateNodeData(id, {
+        error: e instanceof Error ? e.message : 'Failed to extract frame',
         isProcessing: false,
-        outputUrl: 'https://example.com/extracted-frame.jpg', // Placeholder
       });
-    }, 1500);
-  }, [id, data.timestamp, hasVideoConnection, updateNodeData]);
+    }
+  }, [id, hasVideoConnection, data.timestamp, updateNodeData, executeWorkflow]);
 
   const inputHandles = [
     {
       id: HANDLE_IDS.VIDEO_URL,
-      label: 'video',
+      title: 'video',
       color: HANDLE_COLORS.VIDEO,
       position: 'left' as const,
     },
     {
       id: HANDLE_IDS.TIMESTAMP,
-      label: 'time',
+      title: 'time',
       color: HANDLE_COLORS.NUMBER,
       position: 'left' as const,
     },
@@ -100,7 +104,7 @@ function ExtractFrameNodeComponent({ id, data, selected }: NodeProps<ExtractFram
   const outputHandles = [
     {
       id: HANDLE_IDS.OUTPUT,
-      label: 'frame',
+      title: 'frame',
       color: HANDLE_COLORS.IMAGE,
       position: 'right' as const,
     },
@@ -109,21 +113,24 @@ function ExtractFrameNodeComponent({ id, data, selected }: NodeProps<ExtractFram
   return (
     <BaseNode
       id={id}
-      label={data.label || 'Extract Frame'}
-      icon={<Film size={16} />}
-      color="#8b5cf6"
+      title="Extract Frame"
+      titleIcon={Film}
+      nodeType="extract"
+      data={data as any}
       selected={selected}
+      executing={!!data.isProcessing}
       inputHandles={inputHandles}
       outputHandles={outputHandles}
     >
       <div className="p-4 space-y-3">
         {/* Timestamp Input */}
         <div>
-          <label className="text-xs text-gray-600 block mb-1">
+          <label htmlFor={`${id}-extract-timestamp`} className="text-xs text-white/60 block mb-1">
             Timestamp
-            <span className="text-gray-400 ml-1">(seconds or %)</span>
+            <span className="text-white/30 ml-1">(seconds or %)</span>
           </label>
           <input
+            id={`${id}-extract-timestamp`}
             type="text"
             value={localTimestamp}
             onChange={(e) => handleTimestampChange(e.target.value)}
@@ -131,11 +138,11 @@ function ExtractFrameNodeComponent({ id, data, selected }: NodeProps<ExtractFram
             placeholder="e.g., 5 or 50%"
             className={`w-full px-3 py-2 text-sm border rounded-lg ${
               hasTimestampConnection 
-                ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                : 'bg-white border-gray-300 focus:border-purple-500 focus:ring-1 focus:ring-purple-500'
+                ? 'bg-white/5 text-white/30 cursor-not-allowed border-white/10' 
+                : 'bg-[#2a2a2d] border-white/10 text-white placeholder:text-white/30 focus:outline-none focus:border-white/20'
             }`}
           />
-          <p className="text-xs text-gray-400 mt-1">
+          <p className="text-xs text-white/35 mt-1">
             Use "5" for 5 seconds or "50%" for middle
           </p>
         </div>
@@ -148,7 +155,7 @@ function ExtractFrameNodeComponent({ id, data, selected }: NodeProps<ExtractFram
             w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg
             font-medium text-sm transition-all
             ${data.isProcessing || !hasVideoConnection
-              ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              ? 'bg-white/5 text-white/30 cursor-not-allowed border border-white/10'
               : 'bg-purple-500 hover:bg-purple-600 text-white'
             }
           `}
@@ -159,28 +166,31 @@ function ExtractFrameNodeComponent({ id, data, selected }: NodeProps<ExtractFram
 
         {/* Connection Status */}
         {!hasVideoConnection && (
-          <div className="flex items-start gap-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700">
-            <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+          <div className="flex items-start gap-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded text-xs text-amber-300">
+            <AlertCircle size={14} className="shrink-0 mt-0.5" />
             <span>Connect a video input to extract frame</span>
           </div>
         )}
 
         {/* Error Display */}
         {data.error && (
-          <div className="flex items-start gap-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">
-            <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+          <div className="flex items-start gap-2 p-2 bg-red-500/10 border border-red-500/30 rounded text-xs text-red-300">
+            <AlertCircle size={14} className="shrink-0 mt-0.5" />
             <span>{data.error}</span>
           </div>
         )}
 
         {/* Output Preview */}
-        {data.outputUrl && (
-          <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded">
-            <p className="text-xs text-green-700 font-medium mb-1">Extracted Frame:</p>
+        {(executionOutput || data.outputUrl) && (
+          <div className="mt-3 p-2 bg-emerald-500/10 border border-emerald-500/30 rounded">
+            <p className="text-xs text-emerald-300 font-medium mb-1">Extracted Frame:</p>
             <img 
-              src={data.outputUrl} 
+              src={executionOutput || data.outputUrl} 
               alt="Extracted frame" 
-              className="w-full rounded"
+              className="w-full rounded border border-white/10"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
             />
           </div>
         )}

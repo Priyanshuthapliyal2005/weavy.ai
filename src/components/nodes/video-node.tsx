@@ -111,11 +111,17 @@ function VideoNodeComponent({ id, data, selected }: NodeProps<VideoNode>) {
     });
   }, [id, data.videoUrl, updateNodeData]);
 
-  const inputHandles = [];
+  const inputHandles: Array<{
+    id: string;
+    position?: 'left' | 'right';
+    color?: string;
+    title?: string;
+    top?: string;
+  }> = [];
   const outputHandles = [
     {
       id: HANDLE_IDS.OUTPUT,
-      label: 'video',
+      title: 'video',
       color: HANDLE_COLORS.VIDEO,
       position: 'right' as const,
     },
@@ -124,9 +130,10 @@ function VideoNodeComponent({ id, data, selected }: NodeProps<VideoNode>) {
   return (
     <BaseNode
       id={id}
-      label={data.label || 'Upload Video'}
-      icon={<Video size={16} />}
-      color="#10b981"
+      title="Upload Video"
+      titleIcon={Video}
+      nodeType="video"
+      data={data as any}
       selected={selected}
       inputHandles={inputHandles}
       outputHandles={outputHandles}
