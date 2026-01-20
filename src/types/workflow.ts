@@ -26,6 +26,7 @@ export interface LLMNodeData {
   output: string
   error: string | null
   type: "llm"
+  hasRun?: boolean
   locked?: boolean
   temperature?: number
   thinking?: boolean

@@ -49,11 +49,52 @@ const llmNodeDataSchema = z.object({
   imageInputCount: z.number().optional(),
 }).passthrough()
 
+const cropNodeDataSchema = z.object({
+  label: z.string(),
+  xPercent: z.number(),
+  yPercent: z.number(),
+  widthPercent: z.number(),
+  heightPercent: z.number(),
+  isProcessing: z.boolean(),
+  outputUrl: z.string().nullable(),
+  error: z.string().nullable(),
+  type: z.literal('crop'),
+  locked: z.boolean().optional(),
+  viewMode: z.enum(['single', 'all']).optional(),
+}).passthrough()
+
+const extractNodeDataSchema = z.object({
+  label: z.string(),
+  timestamp: z.string(),
+  isProcessing: z.boolean(),
+  outputUrl: z.string().nullable(),
+  error: z.string().nullable(),
+  type: z.literal('extract'),
+  locked: z.boolean().optional(),
+  viewMode: z.enum(['single', 'all']).optional(),
+}).passthrough()
+
+const videoNodeDataSchema = z.object({
+  label: z.string(),
+  videoUrl: z.string().nullable(),
+  videoFile: z.any().nullable(), // File objects can't be serialized
+  type: z.literal('video'),
+  locked: z.boolean().optional(),
+  viewMode: z.enum(['single', 'all']).optional(),
+}).passthrough()
+
 const nodeSchema = z.object({
   id: z.string(),
-  type: z.enum(['text', 'image', 'llm']),
+  type: z.enum(['text', 'image', 'llm', 'crop', 'extract', 'video']),
   position: positionSchema,
-  data: z.union([textNodeDataSchema, imageNodeDataSchema, llmNodeDataSchema]),
+  data: z.union([
+    textNodeDataSchema, 
+    imageNodeDataSchema, 
+    llmNodeDataSchema,
+    cropNodeDataSchema,
+    extractNodeDataSchema,
+    videoNodeDataSchema,
+  ]),
   selected: z.boolean().optional(),
   dragging: z.boolean().optional(),
   width: z.number().optional(),
