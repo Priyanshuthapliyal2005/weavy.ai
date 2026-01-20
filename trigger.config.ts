@@ -1,4 +1,5 @@
 import { defineConfig } from "@trigger.dev/sdk/v3";
+import { ffmpeg } from "@trigger.dev/build/extensions/core";
 
 export default defineConfig({
   project: "proj_ikpaxxxcpmrlbpfgfzyo",
@@ -14,4 +15,9 @@ export default defineConfig({
     },
   },
   maxDuration: 600, // 10 minutes for FFmpeg operations
+  machine: "small-1x", // Default machine preset
+  build: {
+    extensions: [ffmpeg()],
+    external: ["fluent-ffmpeg"],
+  },
 });
