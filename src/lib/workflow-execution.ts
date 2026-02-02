@@ -5,6 +5,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { tasks, runs } from '@trigger.dev/sdk/v3';
 import { buildPlainTextSystemInstruction, sanitizeLlmPlainText } from '@/lib/llm-format';
 import type { cropImageTask, extractFrameTask } from '@/trigger';
+import { buildExecutionLayers, buildExecutionOrder, getNodeInputs } from '@/lib/workflow-graph';
 
 export interface ExecutionResult {
   nodeId: string;
@@ -26,93 +27,8 @@ export interface WorkflowRunResult {
   completedAt?: Date;
 }
 
-/**
- * Build execution order using topological sort (Kahn's algorithm)
- * Returns nodes in order of execution respecting dependencies
- */
-export function buildExecutionOrder(
-  nodes: CustomNode[],
-  edges: Edge[]
-): CustomNode[] {
-  // Build adjacency list and in-degree map
-  const adjList = new Map<string, string[]>();
-  const inDegree = new Map<string, number>();
-  
-  // Initialize
-  nodes.forEach(node => {
-    adjList.set(node.id, []);
-    inDegree.set(node.id, 0);
-  });
-  
-  // Build graph
-  edges.forEach(edge => {
-    const from = edge.source;
-    const to = edge.target;
-    adjList.get(from)?.push(to);
-    inDegree.set(to, (inDegree.get(to) || 0) + 1);
-  });
-  
-  // Find nodes with no dependencies (in-degree = 0)
-  const queue: string[] = [];
-  inDegree.forEach((degree, nodeId) => {
-    if (degree === 0) {
-      queue.push(nodeId);
-    }
-  });
-  
-  const executionOrder: CustomNode[] = [];
-  
-  while (queue.length > 0) {
-    const nodeId = queue.shift()!;
-    const node = nodes.find(n => n.id === nodeId);
-    if (node) {
-      executionOrder.push(node);
-    }
-    
-    // Reduce in-degree for neighbors
-    const neighbors = adjList.get(nodeId) || [];
-    neighbors.forEach(neighbor => {
-      const newDegree = (inDegree.get(neighbor) || 0) - 1;
-      inDegree.set(neighbor, newDegree);
-      if (newDegree === 0) {
-        queue.push(neighbor);
-      }
-    });
-  }
-  
-  return executionOrder;
-}
-
-/**
- * Get input values for a node from connected edges
- */
-export function getNodeInputs(
-  nodeId: string,
-  nodes: CustomNode[],
-  edges: Edge[],
-  executionResults: Map<string, any>
-): Record<string, any> {
-  const inputs: Record<string, any> = {};
-  
-  // Find all edges connected to this node
-  const incomingEdges = edges.filter(edge => edge.target === nodeId);
-  
-  incomingEdges.forEach(edge => {
-    const sourceNode = nodes.find(n => n.id === edge.source);
-    if (!sourceNode) return;
-    
-    const handleId = edge.targetHandle || 'input';
-    
-    // Get the output from the source node's execution result
-    const sourceOutput = executionResults.get(edge.source);
-    
-    if (sourceOutput !== undefined) {
-      inputs[handleId] = sourceOutput;
-    }
-  });
-  
-  return inputs;
-}
+// buildExecutionOrder/buildExecutionLayers/getNodeInputs live in `src/lib/workflow-graph.ts`
+// and are imported above to keep graph utilities client-safe.
 
 /**
  * Execute a single node
@@ -325,6 +241,141 @@ export async function executeNode(
       error: error instanceof Error ? error.message : 'Execution failed' 
     };
   }
+}
+
+/**
+ * Execute entire workflow layer by layer
+ * Provides callback for updating node status in real-time
+ */
+export async function executeWorkflowByLayers(
+  nodes: CustomNode[],
+  edges: Edge[],
+  selectedNodeIds: string[] | undefined,
+  onLayerStart?: (nodeIds: string[]) => void,
+  onLayerComplete?: (nodeIds: string[], results: Map<string, ExecutionResult>) => void
+): Promise<WorkflowRunResult> {
+  const startTime = Date.now();
+  const startedAt = new Date();
+  const nodeResults: ExecutionResult[] = [];
+  const executionResults = new Map<string, any>();
+  
+  // If user selected nodes, include upstream dependencies (closure).
+  const required = new Set<string>(selectedNodeIds ?? nodes.map((n) => n.id));
+  if (selectedNodeIds && selectedNodeIds.length > 0) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const edge of edges) {
+        if (required.has(edge.target) && !required.has(edge.source)) {
+          required.add(edge.source);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  const nodesToExecute = nodes.filter((n) => required.has(n.id));
+  
+  // Build execution layers
+  const layers = buildExecutionLayers(nodesToExecute, edges);
+  
+  let overallStatus: 'success' | 'failed' | 'partial' = 'success';
+  const completed = new Set<string>();
+  const failed = new Set<string>();
+
+  // Execute layer by layer
+  for (const layer of layers) {
+    const layerNodeIds = layer.map(n => n.id);
+    
+    // Notify that this layer is starting
+    if (onLayerStart) {
+      onLayerStart(layerNodeIds);
+    }
+    
+    // Execute all nodes in this layer in parallel
+    const executions = await Promise.all(
+      layer.map(async (node) => {
+        const nodeStartTime = Date.now();
+        const nodeStartedAt = new Date();
+        const inputs = getNodeInputs(node.id, nodes, edges, executionResults);
+
+        // Check if any dependency failed
+        const incomingEdges = edges.filter(edge => edge.target === node.id);
+        const hasFailedDependency = incomingEdges.some(edge => failed.has(edge.source));
+        
+        if (hasFailedDependency) {
+          const now = new Date();
+          return {
+            id: node.id,
+            result: {
+              nodeId: node.id,
+              status: 'skipped' as const,
+              input: inputs,
+              output: null,
+              error: 'Skipped due to failed dependency',
+              duration: 0,
+              startedAt: now,
+              completedAt: now,
+            },
+            output: undefined,
+            error: 'skipped',
+          };
+        }
+
+        const { output, error } = await executeNode(node, inputs);
+        const nodeCompletedAt = new Date();
+        const nodeDuration = Date.now() - nodeStartTime;
+
+        const result: ExecutionResult = {
+          nodeId: node.id,
+          status: error ? 'failed' : 'success',
+          input: inputs,
+          output,
+          error,
+          duration: nodeDuration,
+          startedAt: nodeStartedAt,
+          completedAt: nodeCompletedAt,
+        };
+
+        return { id: node.id, result, output, error };
+      })
+    );
+
+    // Process results for this layer
+    const layerResults = new Map<string, ExecutionResult>();
+    for (const exec of executions) {
+      nodeResults.push(exec.result);
+      layerResults.set(exec.id, exec.result);
+      
+      if (exec.result.status === 'success') {
+        completed.add(exec.id);
+        executionResults.set(exec.id, exec.output);
+      } else if (exec.result.status === 'skipped') {
+        failed.add(exec.id);
+        overallStatus = overallStatus === 'success' ? 'partial' : 'failed';
+      } else {
+        failed.add(exec.id);
+        overallStatus = overallStatus === 'success' ? 'partial' : 'failed';
+      }
+    }
+    
+    // Notify that this layer is complete
+    if (onLayerComplete) {
+      onLayerComplete(layerNodeIds, layerResults);
+    }
+  }
+  
+  const completedAt = new Date();
+  const totalDuration = Date.now() - startTime;
+  
+  return {
+    runId: `run-${Date.now()}`,
+    status: overallStatus,
+    nodeResults,
+    totalDuration,
+    startedAt,
+    completedAt,
+  };
 }
 
 /**

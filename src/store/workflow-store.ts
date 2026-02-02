@@ -7,6 +7,7 @@ import { getHandleColor } from '@/lib/handle-colors'
 import { HANDLE_IDS } from '@/constants/node-ids'
 import { validateConnection } from '@/lib/connection-validation'
 import { SIDEBAR_TABS } from '@/constants/sidebar'
+import { buildExecutionLayers } from '@/lib/workflow-graph'
 
 export type InteractionMode = 'select' | 'pan'
 const WORKFLOW_VERSION = '1.0.0'
@@ -178,6 +179,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             edges: [],
             history: [],
             historyIndex: -1,
+            executionResults: new Map(), // Clear execution results
           });
           
           return data.id;
@@ -427,9 +429,25 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       importWorkflow: (workflow) => {
+        // Clear execution state from imported nodes
+        const cleanedNodes = (workflow.nodes as unknown as WorkflowNode[]).map((node) => ({
+          ...node,
+          data: {
+            ...node.data,
+            output: undefined,
+            outputUrl: null,
+            isRunning: false,
+            isProcessing: false,
+            lastRunStatus: undefined,
+            lastRunError: null,
+            error: null,
+          },
+        }));
+        
         set({
-          nodes: workflow.nodes as unknown as WorkflowNode[],
+          nodes: cleanedNodes,
           edges: workflow.edges as WorkflowEdge[],
+          executionResults: new Map(), // Clear execution results
         })
         get().saveToHistory()
       },
@@ -439,6 +457,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           nodes: [],
           edges: [],
           workflowId: null,
+          executionResults: new Map(), // Clear execution results
         })
         get().saveToHistory()
       },
@@ -589,10 +608,26 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           const workflow = await response.json()
 
+          // Clear execution state from loaded nodes
+          const cleanedNodes = ((workflow.nodes || []) as WorkflowNode[]).map((node) => ({
+            ...node,
+            data: {
+              ...node.data,
+              output: undefined,
+              outputUrl: null,
+              isRunning: false,
+              isProcessing: false,
+              lastRunStatus: undefined,
+              lastRunError: null,
+              error: null,
+            },
+          }));
+
           set({
-            nodes: (workflow.nodes || []) as WorkflowNode[],
+            nodes: cleanedNodes,
             edges: (workflow.edges || []) as WorkflowEdge[],
             projectName: workflow.name || get().projectName,
+            executionResults: new Map(), // Clear execution results
           })
           get().saveToHistory()
         } catch (error) {
@@ -613,25 +648,11 @@ export const useWorkflowStore = create<WorkflowStore>()(
           ? (selectedNodeIds.length === 1 ? 'single' : 'partial')
           : 'full';
 
-        // Immediate UI feedback: mark nodes as running/processing and open history.
+        // Open history sidebar but DON'T mark nodes as running yet
         set({
           isExecuting: true,
           rightSidebarOpen: true,
           rightSidebarTab: 'history',
-          nodes: nodes.map((n) => {
-            if (!selectedSet.has(n.id)) return n;
-            const isProcessingType = n.type === 'crop' || n.type === 'extract';
-            return {
-              ...n,
-              data: {
-                ...n.data,
-                isRunning: !isProcessingType,
-                isProcessing: isProcessingType,
-                lastRunStatus: 'running',
-                lastRunError: null,
-              },
-            };
-          }),
         });
 
         window.dispatchEvent(
@@ -654,7 +675,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
                 version: WORKFLOW_VERSION,
               }),
             });
-            
+
             if (response.ok) {
               const data = await response.json();
               workflowId = data.id;
@@ -669,74 +690,145 @@ export const useWorkflowStore = create<WorkflowStore>()(
             console.log('[executeWorkflow] Using existing workflow:', workflowId);
           }
 
-          console.log('[executeWorkflow] Executing workflow:', { workflowId, nodeCount: nodes.length, edgeCount: edges.length });
-          
-          const response = await fetch('/api/workflows/execute', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              workflowId: workflowId ?? undefined,
-              nodes,
-              edges,
-              selectedNodeIds,
-              scope,
-            }),
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error('[executeWorkflow] Execution failed:', errorText);
-            throw new Error(`Workflow execution failed: ${errorText}`);
+          // Determine required nodes: selected nodes + upstream deps.
+          const required = new Set<string>(
+            selectedNodeIds && selectedNodeIds.length > 0
+              ? selectedNodeIds
+              : nodes.map((n) => n.id)
+          );
+          if (selectedNodeIds && selectedNodeIds.length > 0) {
+            let changed = true;
+            while (changed) {
+              changed = false;
+              for (const e of edges) {
+                if (required.has(e.target) && !required.has(e.source)) {
+                  required.add(e.source);
+                  changed = true;
+                }
+              }
+            }
           }
 
-          const result = await response.json();
-          console.log('[executeWorkflow] Execution complete:', result);
-          
-          // Update execution results - merge with existing results instead of replacing
-          const resultsMap = new Map(get().executionResults);
-          result.nodeResults?.forEach((nr: any) => {
-            resultsMap.set(nr.nodeId, nr.output);
-            console.log('[executeWorkflow] Node result:', nr.nodeId, nr.status, nr.error || 'success');
+          const nodesToExecute = nodes.filter((n) => required.has(n.id)) as unknown as CustomNode[];
+          const layers = buildExecutionLayers(nodesToExecute, edges as any);
+
+          console.log('[executeWorkflow] Executing workflow layer-by-layer via API', {
+            layers: layers.length,
+            nodes: nodesToExecute.length,
           });
-          set((state) => {
-            const nodeResultById = new Map<string, any>();
-            for (const nr of result.nodeResults || []) {
-              nodeResultById.set(nr.nodeId, nr);
+
+          const outputs: Record<string, any> = {};
+          const statuses: Record<string, 'success' | 'failed' | 'skipped'> = {};
+
+          for (const layer of layers) {
+            const layerNodeIds = layer.map((n) => n.id);
+
+            // Glow only this layer
+            set((state) => ({
+              nodes: state.nodes.map((n) => {
+                if (!layerNodeIds.includes(n.id)) return n;
+                const isProcessingType = n.type === 'crop' || n.type === 'extract';
+                return {
+                  ...n,
+                  data: {
+                    ...n.data,
+                    isRunning: !isProcessingType,
+                    isProcessing: isProcessingType,
+                    lastRunStatus: 'running',
+                    lastRunError: null,
+                  },
+                };
+              }),
+            }));
+
+            const resp = await fetch('/api/workflows/execute-layer', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                nodes,
+                edges,
+                layerNodeIds,
+                priorOutputs: outputs,
+                priorStatuses: statuses,
+              }),
+            });
+
+            if (!resp.ok) {
+              const errorText = await resp.text();
+              throw new Error(`Layer execution failed: ${errorText}`);
             }
 
-            return {
-              executionResults: resultsMap,
+            const json = await resp.json();
+            const nodeResults: any[] = json.nodeResults || [];
+
+            // Update maps
+            for (const nr of nodeResults) {
+              outputs[nr.nodeId] = nr.output;
+              statuses[nr.nodeId] = nr.status;
+            }
+
+            // Update UI for this layer
+            set((state) => {
+              const resultsMap = new Map(state.executionResults);
+              for (const nr of nodeResults) {
+                resultsMap.set(nr.nodeId, nr.output);
+              }
+
+              const nodeResultById = new Map<string, any>();
+              for (const nr of nodeResults) nodeResultById.set(nr.nodeId, nr);
+
+              return {
+                executionResults: resultsMap,
+                nodes: state.nodes.map((n) => {
+                  if (!layerNodeIds.includes(n.id)) return n;
+                  const nr = nodeResultById.get(n.id);
+
+                  const nextData: Record<string, any> = {
+                    ...n.data,
+                    isRunning: false,
+                    isProcessing: false,
+                    lastRunStatus: nr?.status || 'success',
+                    lastRunError: nr?.error || null,
+                  };
+
+                  if (n.type === 'llm' && nr && typeof nr.output !== 'undefined') {
+                    nextData.output = typeof nr.output === 'string' ? nr.output : JSON.stringify(nr.output, null, 2);
+                  }
+                  if ((n.type === 'crop' || n.type === 'extract') && nr && typeof nr.output !== 'undefined') {
+                    nextData.output = nr.output;
+                    nextData.outputUrl = nr.output;
+                  }
+
+                  return { ...n, data: nextData };
+                }),
+              };
+            });
+          }
+
+          // Handle cycles/unreachable nodes (not placed in any layer)
+          const layeredIds = new Set(layers.flat().map((n) => n.id));
+          const missing = nodesToExecute
+            .map((n) => n.id)
+            .filter((id) => !layeredIds.has(id));
+          if (missing.length > 0) {
+            set((state) => ({
               nodes: state.nodes.map((n) => {
-                if (!selectedSet.has(n.id)) return n;
-                const nr = nodeResultById.get(n.id);
-                const nextData: Record<string, any> = {
-                  ...n.data,
-                  isRunning: false,
-                  isProcessing: false,
-                  lastRunStatus: nr?.status || 'success',
-                  lastRunError: nr?.error || null,
+                if (!missing.includes(n.id)) return n;
+                return {
+                  ...n,
+                  data: {
+                    ...n.data,
+                    isRunning: false,
+                    isProcessing: false,
+                    lastRunStatus: 'failed',
+                    lastRunError: 'Workflow contains a cycle or unresolved dependency',
+                  },
                 };
-
-                // Make workflow runs feel responsive: hydrate output inline.
-                if (n.type === 'llm' && nr && typeof nr.output !== 'undefined') {
-                  nextData.output = typeof nr.output === 'string' ? nr.output : JSON.stringify(nr.output, null, 2);
-                }
-                // Also save crop and extract node outputs so they persist
-                if ((n.type === 'crop' || n.type === 'extract') && nr && typeof nr.output !== 'undefined') {
-                  nextData.output = nr.output;
-                  nextData.outputUrl = nr.output; // Keep compatibility with outputUrl field
-                }
-
-                return { ...n, data: nextData };
               }),
-            };
-          });
+            }));
+          }
 
-          // Trigger history refresh
           window.dispatchEvent(new CustomEvent('workflow-executed'));
-          console.log('[executeWorkflow] History refresh triggered');
-          
-          return result;
         } catch (error) {
           console.error('Execution error:', error);
           window.dispatchEvent(
@@ -775,4 +867,4 @@ export const useWorkflowStore = create<WorkflowStore>()(
       }),
     }
   )
-)
+);
