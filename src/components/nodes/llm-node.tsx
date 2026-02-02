@@ -152,23 +152,32 @@ function LLMNodeComponent({ id, data, selected }: NodeProps<LLMNode>) {
             const output = (sourceNode.data as { output: string }).output || ""
             if (output) systemPromptParts.push(output)
           }
-        } else if (handle?.startsWith("image_") && sourceNode.type === "image") {
-          const imageNodeData = sourceNode.data as { 
-            imageUrl: string | null
-            images?: Array<{ id: string; url: string; file: File | null }>
-          }
-          
-          let imageUrl = imageNodeData.imageUrl
-          
-          if (handle.startsWith("image_")) {
-            const imageIndex = parseInt(handle.split("_")[1]) - 1
-            if (imageNodeData.images && imageNodeData.images[imageIndex]) {
-              imageUrl = imageNodeData.images[imageIndex].url
+        } else if (handle?.startsWith("image_")) {
+          // Handle image inputs from various node types
+          if (sourceNode.type === "image") {
+            const imageNodeData = sourceNode.data as { 
+              imageUrl: string | null
+              images?: Array<{ id: string; url: string; file: File | null }>
             }
-          }
-          
-          if (imageUrl) {
-            imageUrls.push(imageUrl)
+            
+            let imageUrl = imageNodeData.imageUrl
+            
+            if (handle.startsWith("image_")) {
+              const imageIndex = parseInt(handle.split("_")[1]) - 1
+              if (imageNodeData.images && imageNodeData.images[imageIndex]) {
+                imageUrl = imageNodeData.images[imageIndex].url
+              }
+            }
+            
+            if (imageUrl) {
+              imageUrls.push(imageUrl)
+            }
+          } else if (sourceNode.type === "crop" || sourceNode.type === "extract") {
+            // Read output from crop or extract-frame nodes if they've been executed
+            const nodeOutput = (sourceNode.data as { output?: string }).output
+            if (nodeOutput) {
+              imageUrls.push(nodeOutput)
+            }
           }
         }
       }

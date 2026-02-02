@@ -692,8 +692,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
           const result = await response.json();
           console.log('[executeWorkflow] Execution complete:', result);
           
-          // Update execution results
-          const resultsMap = new Map();
+          // Update execution results - merge with existing results instead of replacing
+          const resultsMap = new Map(get().executionResults);
           result.nodeResults?.forEach((nr: any) => {
             resultsMap.set(nr.nodeId, nr.output);
             console.log('[executeWorkflow] Node result:', nr.nodeId, nr.status, nr.error || 'success');
@@ -717,9 +717,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
                   lastRunError: nr?.error || null,
                 };
 
-                // Make workflow runs feel responsive: hydrate LLM output inline.
+                // Make workflow runs feel responsive: hydrate output inline.
                 if (n.type === 'llm' && nr && typeof nr.output !== 'undefined') {
                   nextData.output = typeof nr.output === 'string' ? nr.output : JSON.stringify(nr.output, null, 2);
+                }
+                // Also save crop and extract node outputs so they persist
+                if ((n.type === 'crop' || n.type === 'extract') && nr && typeof nr.output !== 'undefined') {
+                  nextData.output = nr.output;
+                  nextData.outputUrl = nr.output; // Keep compatibility with outputUrl field
                 }
 
                 return { ...n, data: nextData };
