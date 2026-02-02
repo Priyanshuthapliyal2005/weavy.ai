@@ -639,6 +639,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
       executeWorkflow: async (selectedNodeIds?: string[]) => {
         let { nodes, edges, workflowId } = get();
 
+        const runStartedAt = new Date();
+        const runStartMs = Date.now();
+
         const selectedSet = new Set(
           (selectedNodeIds && selectedNodeIds.length > 0)
             ? selectedNodeIds
@@ -719,6 +722,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           const outputs: Record<string, any> = {};
           const statuses: Record<string, 'success' | 'failed' | 'skipped'> = {};
+          const allNodeResults: any[] = [];
 
           for (const layer of layers) {
             const layerNodeIds = layer.map((n) => n.id);
@@ -760,6 +764,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
             const json = await resp.json();
             const nodeResults: any[] = json.nodeResults || [];
+
+            allNodeResults.push(...nodeResults);
 
             // Update maps
             for (const nr of nodeResults) {
@@ -826,6 +832,37 @@ export const useWorkflowStore = create<WorkflowStore>()(
                 };
               }),
             }));
+          }
+
+          // Persist run for History panel
+          const completedAt = new Date();
+          const totalDuration = Date.now() - runStartMs;
+          const statusValues = Object.values(statuses);
+          const hasSuccess = statusValues.some((s) => s === 'success');
+          const hasFailure = statusValues.some((s) => s === 'failed' || s === 'skipped');
+          const overallStatus = hasFailure
+            ? (hasSuccess ? 'partial' : 'failed')
+            : 'success';
+
+          if (workflowId && workflowId !== 'temp') {
+            try {
+              await fetch('/api/workflows/save-run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  workflowId,
+                  scope,
+                  selectedNodeIds,
+                  status: overallStatus,
+                  totalDuration,
+                  startedAt: runStartedAt.toISOString(),
+                  completedAt: completedAt.toISOString(),
+                  nodeResults: allNodeResults,
+                }),
+              });
+            } catch (saveError) {
+              console.error('[executeWorkflow] Failed to save run:', saveError);
+            }
           }
 
           window.dispatchEvent(new CustomEvent('workflow-executed'));
